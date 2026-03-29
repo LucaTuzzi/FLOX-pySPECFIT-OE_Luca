@@ -4,17 +4,20 @@ import numpy as np
 import pandas as pd
 from netCDF4 import Dataset
 from datetime import datetime
+
 from src.FLOX_processing import FLOX_processing
 
 
-def FLOX_processing_master(data_path, uncertainty, cov):
+def FLOX_processing_master(data_path, uncertainty_path, cov, short_case=False):
     """
     Method that orchestrates FLOX data retrieval from CSV files
 
     Args:
         data_path (str): Directory path where CSV data files are located
-        uncertainty (str): Path to the .mat file containing the FLOX uncertainties
+        uncertainty_path (str): Directory path where uncertainty data files are located
         cov (str): Path to the .mat file containing the inverse covariances
+
+        short_case: only for testing purposes, if True to run only a subset of the data
     """
 
     # Initialize log file
@@ -31,27 +34,13 @@ def FLOX_processing_master(data_path, uncertainty, cov):
 
     # Log the input arguments:
     logf.write(f"data_path   = {data_path}\n")
-    logf.write(f"uncertainty = {uncertainty}\n")
+    logf.write(f"uncertainty_path = {uncertainty_path}\n")
     logf.write(f"cov         = {cov}\n")
     logf.flush()
 
     # Adjust variables before running the program
     wvlRet = [670, 780]
-
-    # Search for input files
-    l0_pattern = os.path.join(data_path, "**", "Incoming*FLUO*.csv")
-    l_pattern = os.path.join(data_path, "**", "Reflected*FLUO*.csv")
-
-    l0_list = sorted(glob.glob(l0_pattern, recursive=True))
-    l_list = sorted(glob.glob(l_pattern,  recursive=True))
-
-    # Basic check confirming that the number of files matches:
-    if len(l0_list) != len(l_list):
-        msg = (f"Warning: found {len(l0_list)} 'Incoming FLUO' CSVs but "
-               f"{len(l_list)} 'Reflected FLUO' CSVs. They should match.")
-        logf.write(msg + "\n")
-        logf.flush()
-
+    
     # Init variables
     allm_specfit = []
     allf_specfit = None         # SIF 
@@ -59,52 +48,98 @@ def FLOX_processing_master(data_path, uncertainty, cov):
     allr_specfit = None         # Reflectance    
     allar_unc = None            # Apparent Reflectance uncertainty 
 
+    # Search for input files: Reflectance as main data (so with uncertainty), Incoming radiance as atm fun (so no uncertainty).
+    Reflectance_pattern = os.path.join(data_path, "**", "Reflectance*FLUO*.csv")
+    unc_reflectance_pattern = os.path.join(uncertainty_path, "**", "Uncertainty*Reflectance*FLUO*.csv")
+    Lin_pattern = os.path.join(data_path, "**", "Incoming*FLUO*.csv")
+
+    Reflectance_list = sorted(glob.glob(Reflectance_pattern, recursive=True))
+    unc_reflectance_list = sorted(glob.glob(unc_reflectance_pattern, recursive=True))
+    Lin_list = sorted(glob.glob(Lin_pattern, recursive=True))
+
+    #short version only for testing:
+    if short_case:
+        start_temp=17
+        end_temp=19
+        Reflectance_list = Reflectance_list[start_temp:end_temp]
+        unc_reflectance_list = unc_reflectance_list[start_temp:end_temp]
+        Lin_list= Lin_list[start_temp:end_temp]
+
+    n_tables = len(Reflectance_list)
+
+    # Basic check confirming that the number of files matches:
+    if not (len(Lin_list) == len(Reflectance_list) == len(unc_reflectance_list)):
+        msg = (
+            "Warning: mismatch in number of files:\n"
+            f"Incoming FLUO: {len(Lin_list)}\n"
+            f"Reflectance FLUO: {len(Reflectance_list)}\n"
+            f"Uncertainty Reflectance FLUO: {len(unc_reflectance_list)}"
+        )
+        logf.write(msg + "\n")
+        logf.flush()
+        raise ValueError(msg)
+
     # Loop over each pair of CSV files
-    n_tables = len(l0_list)
+
     for i_pair in range(n_tables):
         logf.write(f"\nProcessing file {i_pair+1} of {n_tables}\n")
         logf.flush()
 
+        # Read the Reflectance CSV
+        fname_Reflectance = Reflectance_list[i_pair]
+        logf.write(f"Reflectance: {fname_Reflectance}\n")
+        data_Reflectance = pd.read_csv(fname_Reflectance, sep=";", header=0)
+        Reflectance_table = data_Reflectance.iloc[:, 1:].to_numpy()
+
+        # Read the Reflectance Uncertainty CSV
+        fname_unc_Reflectance  = unc_reflectance_list[i_pair]
+        logf.write(f"Incoming uncertainty: {fname_unc_Reflectance}\n")
+        data_unc_Reflectance  = pd.read_csv(fname_unc_Reflectance, sep=";", header=0)
+        unc_Reflectance_table = data_unc_Reflectance.iloc[:, 1:].to_numpy()
+        
         # Read the Incoming CSV
-        fname_l0 = l0_list[i_pair]
-        logf.write(f"Incoming: {fname_l0}\n")
-        data_l0 = pd.read_csv(fname_l0, sep=";", header=0)
-        wvl_qepro = data_l0.iloc[:, 0].to_numpy()
-        l0_table = data_l0.iloc[:, 1:].to_numpy()
+        fname_Lin = Lin_list[i_pair]
+        logf.write(f"Incoming: {fname_Lin}\n")
+        data_Lin = pd.read_csv(fname_Lin, sep=";", header=0)
+        Lin_table = data_Lin.iloc[:, 1:].to_numpy()
 
-        # Read the Reflected CSV
-        fname_l = l_list[i_pair]
-        logf.write(f"Reflected: {fname_l}\n")
-        data_l = pd.read_csv(fname_l, sep=";", header=0)
-        l_table = data_l.iloc[:, 1:].to_numpy()
+        #!!! Check consistency of file names: assume that the last 6 digits before .csv must be equal
+        base_name_Reflectance = os.path.basename(fname_Reflectance)[-10:-4]  # Remove .csv extension
+        base_name_unc_Reflectance = os.path.basename(fname_unc_Reflectance)[-10:-4]
+        base_name_Lin = os.path.basename(fname_Lin)[-10:-4]
+        if not base_name_Reflectance == base_name_unc_Reflectance == base_name_Lin:
+            msg = f"Warning: Inconsistent file names for pair {i_pair+1}"
+            logf.write(msg + "\n")
+            logf.flush()
+            raise ValueError(msg)
 
-        # Compute UTC_time for the header information
-        utc_column = data_l0.columns[1:]
-        utc_time = [header.strip() for header in utc_column]
-        folder_date = os.path.basename(
-            os.path.dirname(fname_l0))
-
-        doy_day_frac = []
-        utc_datime_str = []
-        for time_str in utc_time:
-            dt_obj = datetime.strptime(
-                folder_date + time_str, "%y%m%d%H_%M_%S")
-            day_of_year = (dt_obj - datetime(dt_obj.year, 1, 1)).days + 1
-            frac_day = (dt_obj - datetime(dt_obj.year,
-                        dt_obj.month, dt_obj.day)).seconds / 86400
-            doy_day_frac.append(day_of_year + frac_day)
-            utc_datime_str.append(dt_obj.strftime("%d-%b-%Y %H:%M:%S"))
+        #get only once (from Reflectance), assuming all files have the same wavelength (first column) and UTC timestamp (first row)
+        wvl_qepro = data_Reflectance.iloc[:, 0].to_numpy()
+        utc_column = data_Reflectance.columns[1:]
 
         # Wavelength Definition
         lb = np.argmin(np.abs(wvl_qepro - wvlRet[0]))
         ub = np.argmin(np.abs(wvl_qepro - wvlRet[1]))
 
-        # Spectral subset of input spectra to min_wvl - max_wvl range and convert to mW
+        # Spectral subset of input spectra to min_wvl - max_wvl range
         wvl_sub = wvl_qepro[lb:ub+1]
-        l_in = l0_table[lb:ub+1, :] * 1e3
-        l_up = l_table[lb:ub+1, :] * 1e3
+        Reflectance = Reflectance_table[lb:ub+1, :]
+        unc_Reflectance = unc_Reflectance_table[lb:ub+1, :]
+        Lin = Lin_table[lb:ub+1, :] * 1e3 #convert Lin from W to mW.
 
+        # Compute UTC_time for the header information (from Reflectance)
+        utc_time = [header.strip() for header in utc_column]
+        #folder_date = os.path.basename(os.path.dirname(fname_Reflectance))
 
+        doy_day_frac = []
+        utc_datime_str = []
+
+        for time_str in utc_time:
+            dt_obj = datetime.strptime(time_str, "%y%m%d_%H%M%S")
+            day_of_year = (dt_obj - datetime(dt_obj.year, 1, 1)).days + 1
+            frac_day = (dt_obj - datetime(dt_obj.year,dt_obj.month, dt_obj.day)).seconds / 86400
+            doy_day_frac.append(day_of_year + frac_day)
+            utc_datime_str.append(dt_obj.strftime("%d-%b-%Y %H:%M:%S"))
 
         # === FLOX Data Processing ===
         (
@@ -127,20 +162,20 @@ def FLOX_processing_master(data_path, uncertainty, cov):
             sif_o2a_un,         # Uncertainty at O2-A band
             sif_o2b_un,         # Uncertainty at O2-B band
 
-            app_ref_unc         # Apparent reflectance uncertainty
-        ) = FLOX_processing(
-            Lin_array=l_in,          # Incident radiance (Lin)
-            Lref_array=l_up,         # Reflected radiance (Lup)
+            app_ref_unc,         # Apparent reflectance uncertainty
+            failed_spectra       # List of spectra indices that failed during retrieval
+        ) = FLOX_processing(         
             wvl=wvl_sub,             # Wavelength subset for processing
-            uncertainty=uncertainty, # Optional uncertainty file path
-            cov=cov                  # Covariance matrix for retrieval
+            app_ref_array=Reflectance,
+            app_ref_unc_array = unc_Reflectance,
+            Lin_array=Lin ,        # Incident radiance (Lin) used only in arho_sim = rho + fluorescence / Lin
+            cov=cov,                # Covariance matrix for retrieval
         )
-
-
+        n_spectra = Reflectance_table.shape[1]
 
         # Accumulate the results
         out_arr_local = []
-        for idx_col in range(l0_table.shape[1]):
+        for idx_col in range(n_spectra): 
             row = [
                 doy_day_frac[idx_col],
                 utc_datime_str[idx_col],
@@ -176,7 +211,7 @@ def FLOX_processing_master(data_path, uncertainty, cov):
             allar_unc = np.concatenate([allar_unc, app_ref_unc], axis=1)
             all_utc_datetime_str.extend(utc_datime_str)
 
-        logf.write(f"Finished file {i_pair+1}.\n")
+        logf.write(f"Finished file {i_pair+1}. Processed {n_spectra} spectra.\nFailed {len(failed_spectra)}, indices: {[x + 1 for x in failed_spectra]} .\n")
         logf.flush()
 
     # write output files
