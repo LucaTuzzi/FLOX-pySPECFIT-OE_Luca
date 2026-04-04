@@ -1,163 +1,10 @@
 import numpy as np
 from scipy.interpolate import BSpline
-from scipy.spatial.distance import cosine
+#from scipy.spatial.distance import cosine
 from scipy.special import gamma, gammainc
-import scipy
-import xarray as xr
-import logging
+from scipy.integrate import quad #!!!new, to be check in different versions of scipy
 import warnings
-
-
-
-def _get_red_sif(wl, sif):
-    """
-    Extract red fluorescence peak at 684 nm.
-
-    Parameters
-    ----------
-    wl : numpy.ndarray
-        Wavelength vector [nm]
-    SIF : numpy.ndarray
-        Solar-Induced Fluorescence spectrum
-
-    Returns
-    -------
-    tuple
-        (SIF_R_max, SIF_R_wl) - Red peak intensity and wavelength
-    """
-    index = np.argmin(np.abs(wl - 684))  # TODO add consts
-    sif_r_max = sif[index]
-    if np.isnan(sif_r_max):
-        sif_r_wl = np.nan
-    else:
-        sif_r_wl = wl[
-            14
-        ]  # TODO MAGIC shouldn't be here but local max too hard to find because second peak is hiding it.
-    return sif_r_max, sif_r_wl
-
-
-def _get_far_red_sif(wl, sif):
-    """
-    Extract far-red fluorescence peak (>720 nm).
-
-    Parameters
-    ----------
-    wl : numpy.ndarray
-        Wavelength vector [nm]
-    SIF : numpy.ndarray
-        Solar-Induced Fluorescence spectrum
-
-    Returns
-    -------
-    tuple
-        (SIF_FR_max, SIF_FR_wl) - Far-red peak intensity and wavelength
-    """
-    mask_far_red = wl > 720  # TODO add const
-    max_far_red_index = np.argmax(sif[mask_far_red])
-    sif_fr_max = sif[mask_far_red][max_far_red_index]
-    if np.isnan(sif_fr_max):
-        sif_fr_wl = np.nan
-    else:
-        sif_fr_wl = wl[mask_far_red][max_far_red_index]
-    return sif_fr_max, sif_fr_wl
-
-
-def _get_o2a_sif(wl, sif):
-    """
-    Extract SIF value at O2-A absorption line (760 nm).
-
-    Parameters
-    ----------
-    wl : numpy.ndarray
-        Wavelength vector [nm]
-    SIF : numpy.ndarray
-        Solar-Induced Fluorescence spectrum
-
-    Returns
-    -------
-    float
-        SIF intensity at 760 nm
-    """
-    ii = np.argmin(np.abs(wl - 760))
-    sif_o2a = sif[ii]
-    return sif_o2a
-
-
-def _get_o2b_sif(wl, sif):
-    """
-    Extract SIF value at O2-B absorption line (687 nm).
-
-    Parameters
-    ----------
-    wl : numpy.ndarray
-        Wavelength vector [nm]
-    SIF : numpy.ndarray
-        Solar-Induced Fluorescence spectrum
-
-    Returns
-    -------
-    float
-        SIF intensity at 687 nm
-    """
-    index = np.argmin(np.abs(wl - 687))
-    sif_o2b = sif[index]
-    return sif_o2b
-
-
-def _get_spectrally_integrated_sif(wl, sif):
-    """
-    Calculate total SIF by spectral integration.
-
-    Parameters
-    ----------
-    wl : numpy.ndarray
-        Wavelength vector [nm]
-    SIF : numpy.ndarray
-        Solar-Induced Fluorescence spectrum
-
-    Returns
-    -------
-    float
-        Integrated SIF value [W m⁻² sr⁻¹]
-    """
-    sifint = np.trapezoid(sif, wl)
-    return sifint
-
-
-def _reflectance_concatenation(
-    floris_app_refl_map, floris_wv_merged, rhomin_wl, wvl_1nm, min_wl
-):
-    """
-    Concatenate interpolated reflectance with minimum wavelength data.
-
-    Parameters
-    ----------
-    floris_app_refl_map : numpy.ndarray
-        FLORIS apparent reflectance values
-    FLORIS_wv_merged : numpy.ndarray
-        FLORIS wavelength grid [nm]
-    RHOmin_wl : numpy.ndarray
-        Reflectance data for minimum wavelength range
-    wvl_1nm : numpy.ndarray
-        Target 1nm wavelength grid [nm]
-    min_wl : float
-        Minimum wavelength threshold [nm]
-
-    Returns
-    -------
-    numpy.ndarray
-        Concatenated reflectance spectrum
-    """
-    # filter out zero and nan values from floris_wv_merged
-    idx = (floris_wv_merged != 0) & (~np.isnan(floris_wv_merged))
-
-    # interpolate floris_app_refl_map at points wvl_1nm using filtered floris_wv_merged
-    tmp_rho = np.interp(wvl_1nm, floris_wv_merged[idx], floris_app_refl_map[idx])
-
-    # concatenate values where wvl_1nm < min_wl with rhomin_wl
-    y = np.concatenate((tmp_rho[wvl_1nm < min_wl], rhomin_wl))
-    return y
-
+import matplotlib.pyplot as plt
 
 def _compute_reflectance(x, sp, wvl):
     """
@@ -225,7 +72,7 @@ def _compute_fluorescence(x, sp, wvl):
     else:
         fluorescence = np.zeros((x.shape[0], wvl.shape[0]), dtype=np.float64)
         for i in range(9):
-            sp.c = x[i, :8]
+            sp.c = x[i, :8] #!!! 
             fluorescence[i, :] = _sif_forward_model(x[i, :8], wvl)
         fluorescence[8:, :] = np.tile(fluorescence[8, :], (19, 1))
 
@@ -263,7 +110,6 @@ def l2b_forward_model(x, wvl, sp, Lin):
     arho_sim = rho + fluorescence / Lin
 
     return arho_sim
-
 
 def _sif_forward_model(parameters, wavelengths):
     """
@@ -389,6 +235,7 @@ def _compute_asymmetric_super_gaussian(
     exponent = -(np.abs(scaled_offset) ** shape_parameter)
     component = np.exp(exponent)
     warnings.resetwarnings()
+    # barycenter_offset, left_width, right_width, inv_left, inv_right
     return intensity * component
 
 
@@ -409,8 +256,8 @@ def _analytical_barycenter(c, w, k, aw, wvl_min, wvl_max):
     # Calculate m with numerical stability
     numerator = (w + aw) ** 2 * g2 - (w - aw) ** 2 * g1
     denominator = (w + aw) * g4 + (w - aw) * g3
-    m = numerator / denominator  # np.clip(denominator, 1e-10, None)
-
+    #denominator = np.clip(denominator, 1e-10, None) #!!! I was wondering if we should clip the denominator to avoid division by zero as we do with k
+    m = numerator / denominator
     return m
 
 
@@ -425,7 +272,8 @@ def _l2b_regularized_cost_function_optimization(
     sy,
     lmb,
     l2b_wavelength_grid,
-    max_iter=15,
+    SIF_unc_MC,
+    max_iter=15
 ):
     
     # Define spline knots for surface reflectance
@@ -460,25 +308,18 @@ def _l2b_regularized_cost_function_optimization(
     # Set initial spline coefficients from prior mean
     sp.c = xa_mean[8:] 
 
-    # Define cost function
-    def cost_function(fx, x):
-        c = (apparent_reflectance - fx).T @ sy @ (apparent_reflectance - fx) + g * (
-            x - xa_mean
-        ).T @ sa @ (x - xa_mean)
-        return c
-
-    # Define forward model and its Jacobian
+    # Define forward model and its Jacobian_jacobian_calculation
     def fw(x):
         return l2b_forward_model(
             x,
             wvl,
             sp,
-            Lin=atm_func["Lin"],
+            atm_func,
         )
-
+    
     def jac(x):
-        return _jacobian_calculation(fw, x)
-
+        jac, _ = _jacobian_calculation(fw, x, wvl, full_numerical=True, Lin=atm_func)
+        return jac
 
     # --- Initialization ---
     y   = apparent_reflectance
@@ -493,7 +334,7 @@ def _l2b_regularized_cost_function_optimization(
     # Initial forward model evaluation
     fx0 = fw(x0)
     k0 = jac(x0)
-    
+
     # initialization debug arrays
     x_iter       = np.full((n_x, max_iter + 1), np.nan)
     c1y_iter     = np.full((max_iter + 1), np.nan)
@@ -507,7 +348,6 @@ def _l2b_regularized_cost_function_optimization(
     A_iter       = np.full((n_x, n_x, max_iter + 1), np.nan)
     K_iter       = np.full((wvl.size, n_x, max_iter +1 ), np.nan)
     flag         = np.full((max_iter + 1), np.nan)
-
 
     # COST FUNCTION
     c0y = (y - fx0).T @ sy @ (y - fx0)
@@ -564,7 +404,7 @@ def _l2b_regularized_cost_function_optimization(
         fx0 = fx1_reg.copy()
         k0 = k1_reg.copy()
 
-    
+    #!!!maybe we dont'need all this copy
     # Reset for full iteration
     xa = x1.copy()
     x0 = xa_mean.copy()
@@ -611,34 +451,10 @@ def _l2b_regularized_cost_function_optimization(
         c1y_iter[i] = c1y
         c1x_iter[i] = c1x
 
+        rho = compute_LM_gain_ratio(x0, x1, fx0, y, c0, c1, LMgamma, D, k0, sy)
 
-        # Updates LMgamma
-        # LMgamma_method = 0  # Presse et al., x10
-        # LMgamma_method = 1  # TrustRegion
-        LMgamma_method = 2    # Geodesic
-
-        if LMgamma_method == 1:  # TrustRegion
-            if i == 1:
-                increase_count = 0
-
-            rho = compute_LM_gain_ratio(x0, x1, fx0, y, c0, c1, LMgamma, D, k0, sy)
-
-            LMgamma, x1_reg, c1, fx1_reg, k1_reg, flag[i], skipIteration = LMgamma_update_TrustRegion(
-                rho, LMgamma, x0, x1_reg, c0, c1, fx0, fx1_reg, k0, k1_reg, increase_count
-            )
-
-        elif LMgamma_method == 2:  # Geodesic
-            rho = compute_LM_gain_ratio(x0, x1, fx0, y, c0, c1, LMgamma, D, k0, sy)
-
-            LMgamma, x1_reg, c1, fx1_reg, k1_reg, flag[i], skipIteration = LMgamma_update_Geodesic(
-                rho, LMgamma, x0, x1_reg, c0, c1, fx0, fx1_reg, k0, k1_reg
-            )
-
-        else:  # Press et al.
-            LMgamma, x1_reg, c1, fx1_reg, k1_reg, flag[i], skipIteration = LMgamma_update(
-                LMgamma, x0, x1_reg, c0, c1, fx0, fx1_reg, k0, k1_reg
-            )
-
+        LMgamma, x1_reg, c1, fx1_reg, k1_reg, flag[i], skipIteration = LMgamma_update_Geodesic(
+            rho, LMgamma, x0, x1_reg, c0, c1, fx0, fx1_reg, k0, k1_reg)
 
         # LMgamma update (placeholder)
         LMgamma_iter[i] = LMgamma
@@ -663,16 +479,21 @@ def _l2b_regularized_cost_function_optimization(
         k0 = k1_reg.copy()
         c0 = c1
 
-
     sp.c = x1_reg[8:]
     reflectance = sp(l2b_wavelength_grid)
     sif = _sif_forward_model(x1_reg[:8].flatten(), l2b_wavelength_grid)
 
-
     # Compute posterior uncertainty
-    sif_unc = MC_SIF_uncertainty_estimation(x1_reg, sx, l2b_wavelength_grid)
-
-
+    if SIF_unc_MC == True:
+        k1_reg_8=k1_reg[:,:8]
+        sx_8 = np.linalg.inv(lmb_ECM * sa[:8,:8] + k1_reg_8.T @ sy @ k1_reg_8)
+        sif_unc = MC_SIF_uncertainty_estimation(x1_reg, sx_8, l2b_wavelength_grid, sizeMC=300)
+    else:
+        k1_analytical, dx_dF = _jacobian_calculation(fw, x1_reg, wvl, full_numerical=False, Lin=atm_func)   
+        k1_analytical_8 = k1_analytical[:,:8]
+        sx_8 = np.linalg.inv(lmb_ECM * sa[:8,:8] + k1_analytical_8.T @ sy @ k1_analytical_8)
+        sif_unc = np.sqrt(np.diag(dx_dF @ sx_8 @ dx_dF.T))
+    
     return reflectance, sif, sif_unc
 
 
@@ -775,7 +596,7 @@ def LMgamma_update_Geodesic(rho, LMgamma, x0, x1_reg, c0, c1, fx0, fx1_reg, k0, 
     return LMgamma, x1_reg, c1, fx1_reg, k1_reg, flag, skipIteration
 
 
-def MC_SIF_uncertainty_estimation(x, sx, wvl):
+def MC_SIF_uncertainty_estimation(x, sx, wvl, sizeMC):
     """
     Monte-Carlo approach for uncertainty estimation
 
@@ -815,10 +636,9 @@ def MC_SIF_uncertainty_estimation(x, sx, wvl):
 
     Sigma = make_psd(Sigma)
 
-
     # Set random seed for reproducibility
     np.random.seed(0)
-    R = np.random.multivariate_normal(mean=mu, cov=Sigma, size=300)
+    R = np.random.multivariate_normal(mean=mu, cov=Sigma, size=sizeMC)
 
     # For each sample row, build a SIF spectrum
     n_wvl = wvl.shape[0]
@@ -839,136 +659,237 @@ def MC_SIF_uncertainty_estimation(x, sx, wvl):
 
 ######################################################################
 
-
-
-def _jacobian_calculation(func, x, epsilon=np.float64(1e-6)):
+def _jacobian_calculation(func, x, wvl, epsilon=np.float64(1e-6), full_numerical=True, Lin=None):
     num_parameters = len(x)
-    x_perturbed = np.tile(x, (num_parameters + 1, 1)) + np.concatenate(
-        [epsilon * np.eye(num_parameters), np.zeros((1, num_parameters))]
-    )
+    perturbation = np.concatenate( [epsilon * np.eye(num_parameters), np.zeros((1, num_parameters))])
+    x_perturbed = np.tile(x, (num_parameters + 1, 1)) + perturbation
+
     y = func(x_perturbed)
-    return ((y[:-1, :] - y[-1, :]) * (1 / epsilon)).T
 
+    y_perturbed_full = y[:-1, :]
+    y_base = y[-1, :][np.newaxis, :]
 
-
-def _l2b_regularized_cost_function_optimization_OLD(
-    wvl,
-    apparent_reflectance,
-    xa_mean,
-    atm_func,
-    sa,
-    sy,
-    g,
-    l2b_wavelength_grid,
-    max_iter=15,
-    ftol=1e-4,
-):
+    if full_numerical:
+        jac_numerical = ((y_perturbed_full - y_base) * (1 / epsilon)).T
+        jac_analytical = None
+        dx_dF = None
     
-    # Define spline knots for surface reflectance
-    knots = np.array([
-        wvl[0],
-        wvl[0],
-        wvl[0],
-        wvl[0],
-        675.0000,
-        682.6000,
-        693.4500,
-        695.4500,
-        699.0333,
-        704.4500,
-        712.1000,
-        719.6833,
-        727.2667,
-        734.6333,
-        741.6167,
-        747.8333,
-        755.5000,
-        768.000,
-        wvl[-1],
-        wvl[-1],
-        wvl[-1],
-        wvl[-1]
-    ])
+    else:
+        y_perturbed = y_perturbed_full[8:,:]
+        jac_numerical = ((y_perturbed - y_base) * (1 / epsilon)).T #681x18
+        jac_analytical, dx_dF = _jacobian_calculation_analytical(x[:8], wvl, Lin) #681x8
+    
+    if jac_analytical is None:
+        jac_combined = jac_numerical
+    elif jac_numerical is None:
+        jac_combined = jac_analytical
+    else:
+        jac_combined = np.hstack([jac_analytical, jac_numerical])
+    #!!!!need dimensional check in each case
+    return jac_combined, dx_dF 
 
-    # Initialize B-spline for surface reflectance
-    sp = BSpline(knots, xa_mean[8:], 3)
+def _jacobian_calculation_analytical(x, wvl, Lin):
+    '''
+        [0] : Red peak amplitude (I_red)
+        [1] : Red peak center wavelength (λ_red) [nm]
+        [2] : Red peak width parameter (σ_red) [nm]
+        [3] : Far-red peak intensity (I_far)
+        [4] : Far-red peak center wavelength (C_far) [nm]
+        [5] : Far-red peak base width (w_far) [nm]
+        [6] : Far-red peak shape parameter (k_far) [-]
+        [7] : Far-red peak asymmetry width (aw_far) [nm]
+   '''     
 
-    # Set initial spline coefficients from prior mean
-    sp.c = xa_mean[8:] 
+    x1,x2,x3,x4,x5,x6,x7,x8 = x
 
-    # Define cost function
-    def cost_function(fx, x):
-        c = (apparent_reflectance - fx).T @ sy @ (apparent_reflectance - fx) + g * (
-            x - xa_mean
-        ).T @ sa @ (x - xa_mean)
-        return c
+    a = x6 + x8
+    b = x6 - x8
+    p = np.abs(x7)
+    sgn = np.sign(x7)
 
-    # Define forward model and its Jacobian
-    def fw(x):
-        return l2b_forward_model(
-            x,
-            wvl,
-            sp,
-            Lin=atm_func["Lin"],
-        )
+    wvl_min = wvl[0]
+    wvl_max = wvl[-1]
 
-    def jac(x):
-        return _jacobian_calculation(fw, x)
+    inv_a = 1.0 / a
+    inv_b = 1.0 / b
 
-    # Levenberg-Marquardt optimization
-    lm_gamma = 0.1
+    # ===== gamma args =====
+    t1_base=(x5 - wvl_min)*inv_b
+    t2_base=(wvl_max - x5)*inv_a
+    t1 = (t1_base)**p
+    t2 = (t2_base)**p
 
-    # Initialization
-    y = apparent_reflectance
-    x0 = xa_mean.copy()
-    x1 = xa_mean.copy()
+    s1 = 1.0 / p
+    s2 = 2.0 / p
 
-    # Initial forward model evaluation
-    fx0 = fw(x0)
-    k = jac(x0)
-    c0 = (y - fx0) @ sy @ (y - fx0) + g * (x0 - xa_mean) @ sa @ (x0 - xa_mean)
-    i = 0
-    c = ftol
-    while c >= ftol and i < max_iter:
-        i += 1
-        ci = g * sa + k.T @ sy @ k + lm_gamma * sa
-        x1 = x0 + scipy.linalg.inv(ci) @ (
-            k.T @ (sy @ (y - fx0)) - g * sa @ (x0 - xa_mean)
-        )
-        fx1 = fw(x1)
-        k1 = jac(x1)
-        c1 = cost_function(fx1, x1)
-        if c1 >= c0:
-            x1 = x0
-            fx1 = fx0
-            c1 = c0
-            k1 = k
-            lm_gamma = lm_gamma / 10
-            continue
+    G1 = gamma(s1)
+    G2 = gamma(s2)
+
+    g1 = G2 * gammainc(s2, t1)
+    g2 = G2 * gammainc(s2, t2)
+    g3 = G1 * gammainc(s1, t1)
+    g4 = G1 * gammainc(s1, t2)
+
+    # ===== barycenter =====
+    N = a*a*g2 - b*b*g1
+    D = a*g4 + b*g3
+    m = N / D
+
+    # ===== Common indicator & exponential terms =====
+    D2=D*D
+    delta = (wvl - x5 + m)
+    Xm = (delta <= 0).astype(float)
+    Xp = 1-Xm
+    
+    U_m = delta * inv_b
+    U_p = delta * inv_a
+
+    abs_Um = np.abs(U_m)
+    abs_Up = np.abs(U_p)
+
+    S_m = np.sign(U_m)
+    S_p = np.sign(U_p)
+
+    pow_m = abs_Um**x7
+    pow_p = abs_Up**x7
+
+    E_m = np.exp(-pow_m)
+    E_p = np.exp(-pow_p)
+
+    # ===== Lorentzian =====
+    den = (wvl - x2)*(wvl - x2) + x3*x3
+    den2 = den*den
+    u1 = (wvl - x2)/x3
+
+    dx1_dF = 1 / (u1*u1 + 1)
+    dx2_dF = 2*x1*(wvl - x2)*x3*x3 / den2
+    dx3_dF = 2*x1*(wvl - x2)*(wvl - x2)*x3 / den2
+
+    # ===== dx4 =====
+    dx4_dF = Xm*E_m + Xp*E_p
+
+    # ===== dx5 =====
+    exp_t1 = np.exp(-t1)
+    exp_t2 = np.exp(-t2)
+
+    t1_s1 = t1**(s1-1)
+    t1_s2 = t1**(s2-1)
+    t2_s1 = t2**(s1-1)
+    t2_s2 = t2**(s2-1)
+
+    dt1dx5 = (p*inv_b)*(t1_base)**(p-1)
+    dt2dx5 = -(p*inv_a)*(t2_base)**(p-1)
+
+    dg1dx5 = t1_s2 * exp_t1 * dt1dx5
+    dg3dx5 = t1_s1 * exp_t1 * dt1dx5
+    dg2dx5 = t2_s2 * exp_t2 * dt2dx5
+    dg4dx5 = t2_s1 * exp_t2 * dt2dx5
+
+    Np = a*a*dg2dx5 - b*b*dg1dx5
+    Dp = a*dg4dx5 + b*dg3dx5
+
+    dmdx5 = (Np*D - N*Dp) / (D2)
+
+    common_m = x4*x7*(abs_Um**(x7-1))*S_m*inv_b*(1 - dmdx5)
+    common_p = x4*x7*(abs_Up**(x7-1))*S_p*inv_a*(1 - dmdx5)
+
+    dx5_dF = Xm*(E_m*common_m) + Xp*(E_p*common_p)
+
+    # ===== dx6 =====
+    dg1dx6 = -(p*inv_b)*t1**s2 * exp_t1
+    dg3dx6 = -(p*inv_b)*t1**s1 * exp_t1
+    dg2dx6 = -(p*inv_a)*t2**s2 * exp_t2
+    dg4dx6 = -(p*inv_a)*t2**s1 * exp_t2
+
+    Np = 2*a*g2 + a*a*dg2dx6 - 2*b*g1 - b*b*dg1dx6
+    Dp = g4 + a*dg4dx6 + g3 + b*dg3dx6
+
+    dmdx6 = (Np*D - N*Dp) / (D2)
+
+    du_m = (b*dmdx6 - delta) / (b*b)
+    du_p = (a*dmdx6 - delta) / (a*a)
+
+    dx6_dF = x4 * (Xm*(-E_m*x7*(abs_Um**(x7-1))*S_m*du_m) +
+        Xp*(-E_p*x7*(abs_Up**(x7-1))*S_p*du_p))
+
+    # ===== dx7 FULL =====
+    dgdt_g1 = t1**(s2-1)*exp_t1
+    dgdt_g3 = t1**(s1-1)*exp_t1
+    dgdt_g2 = t2**(s2-1)*exp_t2
+    dgdt_g4 = t2**(s1-1)*exp_t2
+
+    ds2dp = -2/(p**2)
+    ds1dp = -1/(p**2)
+
+    dt1dp = t1*np.log(t1_base)
+    dt2dp = t2*np.log(t2_base)
+
+    dgs_g1 = gamma_s_derivative(t1, s2)
+    dgs_g3 = gamma_s_derivative(t1, s1)
+    dgs_g2 = gamma_s_derivative(t2, s2)
+    dgs_g4 = gamma_s_derivative(t2, s1)
+
+    dg1dx7 = sgn*(dgs_g1*ds2dp + dgdt_g1*dt1dp)
+    dg3dx7 = sgn*(dgs_g3*ds1dp + dgdt_g3*dt1dp)
+    dg2dx7 = sgn*(dgs_g2*ds2dp + dgdt_g2*dt2dp)
+    dg4dx7 = sgn*(dgs_g4*ds1dp + dgdt_g4*dt2dp)
+
+    Np = a*a*dg2dx7 - b*b*dg1dx7
+    Dp = a*dg4dx7 + b*dg3dx7
+
+    dmdx7 = (Np*D - N*Dp) / (D2)
+
+    term1 = -E_m * (pow_m * np.log(abs_Um + 1e-12) + x7 * abs_Um**(x7-1) * S_m * (dmdx7 / b))
+    term2 = -E_p * (pow_p * np.log(abs_Up + 1e-12) + x7 * abs_Up**(x7-1) * S_p * (dmdx7 / a))
+
+    dx7_dF = x4 * (Xm*term1 + Xp*term2)
+
+    # ===== dx7 APPROX =====
+    # #!!!to check if we really need the full expression or if the approximation is sufficient,
+    # in this way we avoid the gamma_s_derivative and the related numerical integration
+    #dx7_approx_dF = x4 * (Xm * (-E_m * (pow_m * np.log(abs_Um + 1e-12))) + Xp * (-E_p * (pow_p * np.log(abs_Up + 1e-12))) )
+
+    # ===== dx8 =====
+    dg1dx8 = (p*inv_b)*t1**s2 * exp_t1
+    dg3dx8 = (p*inv_b)*t1**s1 * exp_t1
+    dg2dx8 = -(p*inv_a)*t2**s2 * exp_t2
+    dg4dx8 = -(p*inv_a)*t2**s1 * exp_t2
+
+    Np = 2*a*g2 + a*a*dg2dx8 + 2*b*g1 - b*b*dg1dx8
+    Dp = g4 - g3 + a*dg4dx8 + b*dg3dx8
+
+    dmdx8 = (Np*D - N*Dp) / (D2)
+
+    du_m = (b*dmdx8 + delta) / (b*b)
+    du_p = (a*dmdx8 - delta) / (a*a)
+
+    dx8_dF = x4 * (Xm*(-E_m*x7*(abs_Um**(x7-1))*S_m*du_m) + Xp*(-E_p*x7*(abs_Up**(x7-1))*S_p*du_p))
+
+    #jac_analytical = dRapp/dx = dRapp/dLsim * dLsim/dF * dF/dx
+    # dRapp_dLsim = 1/Lin     #dLsim_dF = 1    #dF_dx = dx_dF
+
+    dx_dF = np.column_stack([dx1_dF, dx2_dF, dx3_dF, dx4_dF,dx5_dF, dx6_dF, dx7_dF, dx8_dF])
+    eps = 1e-12
+    jac_analytical =  dx_dF/(Lin[:, None] + eps) #681x8
+
+    return jac_analytical, dx_dF
+
+def gamma_s_derivative(t, s):
+    """
+    Computes the derivative of the gamma function with respect to its shape parameter s 
+    using numerical integration.
+    integral(@(u) log(u).*u.^(s-1).*exp(-u),0,t)
+    
+    t : array-like, upper limit of integration
+    s : float, shape parameter of the gamma function 
+    """
+    t = np.atleast_1d(t)
+    result = np.zeros_like(t, dtype=float)
+    
+    for i, ti in enumerate(t):
+        if ti == 0:
+            result[i] = 0.0
         else:
-            t0 = 1 - (np.linalg.norm(y - fx1) / np.linalg.norm(y - fx0)) ** 2
-            t1 = (np.linalg.norm(k * (x1 - x0)) / np.linalg.norm(y - fx0)) ** 2
-            t2 = (
-                2
-                * (
-                    (np.sqrt(lm_gamma) * np.linalg.norm(np.eye(n_x) * (x1 - x0)))
-                    / np.linalg.norm(y - fx0)
-                )
-                ** 2
-            )
-            rho = t0 / (t1 + t2)
-
-            if rho > 0.01:
-                lm_gamma = lm_gamma * 1.1
-            else:
-                lm_gamma = lm_gamma / 10
-        c = abs(c1 - c0) / c0 * 1e2
-        x0 = x1
-        fx0 = fx1
-        c0 = c1
-        k = k1
-
-    sp.c = x1[8:]
-    reflectance = sp(l2b_wavelength_grid)
-    sif = _sif_forward_model(x1[:8].flatten(), l2b_wavelength_grid)
-    return reflectance, sif
+            integrand = lambda u: np.log(u) * u**(s-1) * np.exp(-u)
+            result[i] = quad(integrand, 0, ti, limit=200)[0]  # limit increased for better convergence
+    return result
