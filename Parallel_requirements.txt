@@ -1,0 +1,32 @@
+# Installation Instructions
+
+## Requirements
+This project, to be run in parallel mode, requires the following Python packages:
+-joblib (parallel processing)
+-tqdm (progress bar)
+-tqdm-joblib (integration between tqdm and joblib)
+---
+
+## Installation (pip)
+Install all dependencies with:
+pip install joblib tqdm tqdm-joblib
+---
+
+## Installation (conda)
+If you are using conda:
+conda install joblib tqdm
+pip install tqdm-joblib
+---
+
+## Verify Installation
+Run the following in Python:
+from joblib import Parallel, delayed
+from tqdm import tqdm
+from tqdm_joblib import tqdm_joblib
+
+If no errors occur, the installation is successful.
+---
+
+## Notes
+Only `tqdm-joblib` is usually missing.
+
