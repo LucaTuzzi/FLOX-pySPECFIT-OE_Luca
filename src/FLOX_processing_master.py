@@ -4,13 +4,14 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 import os
+from scipy.io import loadmat
 from src.FLOX_functions import write_results_to_netcdf, load_inverse_covariance, write_csv_with_headers
 from src.FLOX_processing import FLOX_processing
 #from src.FLOX_processing_NotParallel import FLOX_processing
 import time
 
 
-def FLOX_processing_master(data_path, uncertainty_path, cov_path, SIF_unc_MC=True, parallel=False, short_case=False,):
+def FLOX_processing_master(data_path, uncertainty_path, cov_path, uncertainty_as_input=True, SIF_unc_MC=True, parallel=False, short_case=False,):
     """
     Method that orchestrates FLOX data retrieval from CSV files
 
@@ -64,30 +65,40 @@ def FLOX_processing_master(data_path, uncertainty_path, cov_path, SIF_unc_MC=Tru
 
     # Search for input files: Reflectance as main data (so with uncertainty), Incoming radiance as atm fun (so no uncertainty).
     Reflectance_pattern = os.path.join(data_path, "**", "Reflectance*FLUO*.csv")
-    unc_reflectance_pattern = os.path.join(uncertainty_path, "**", "Uncertainty*Reflectance*FLUO*.csv")
-    Lin_pattern = os.path.join(data_path, "**", "Incoming*FLUO*.csv")
-
     Reflectance_list = sorted(glob.glob(Reflectance_pattern, recursive=True))
-    unc_reflectance_list = sorted(glob.glob(unc_reflectance_pattern, recursive=True))
+    Lin_pattern = os.path.join(data_path, "**", "Incoming*FLUO*.csv")
     Lin_list = sorted(glob.glob(Lin_pattern, recursive=True))
+
+    if uncertainty_as_input:
+        unc_reflectance_pattern = os.path.join(uncertainty_path, "**", "Uncertainty*Reflectance*FLUO*.csv")
+        unc_reflectance_list = sorted(glob.glob(unc_reflectance_pattern, recursive=True))
+    else:
+        unc_data = loadmat(uncertainty_path)
 
     #short version only for testing:
     if short_case:
-        start_temp=17
-        end_temp=19
+        start_temp=0
+        end_temp=2
         Reflectance_list = Reflectance_list[start_temp:end_temp]
-        unc_reflectance_list = unc_reflectance_list[start_temp:end_temp]
         Lin_list= Lin_list[start_temp:end_temp]
+        if uncertainty_as_input:
+            unc_reflectance_list = unc_reflectance_list[start_temp:end_temp] 
+        
 
     n_tables = len(Reflectance_list)
 
     # Basic check confirming that the number of files matches:
-    if not (len(Lin_list) == len(Reflectance_list) == len(unc_reflectance_list)):
+    if uncertainty_as_input:
+        valid = (len(Lin_list) == len(Reflectance_list) == len(unc_reflectance_list))
+    else:
+        valid = (len(Lin_list) == len(Reflectance_list))
+
+    if not valid:
         msg = (
             "Warning: mismatch in number of files:\n"
             f"Incoming FLUO: {len(Lin_list)}\n"
             f"Reflectance FLUO: {len(Reflectance_list)}\n"
-            f"Uncertainty Reflectance FLUO: {len(unc_reflectance_list)}"
+            + (f"Uncertainty Reflectance FLUO: {len(unc_reflectance_list)}\n" if uncertainty_as_input else "" )
         )
         logf.write(msg + "\n")
         logf.flush()
@@ -105,47 +116,82 @@ def FLOX_processing_master(data_path, uncertainty_path, cov_path, SIF_unc_MC=Tru
         data_Reflectance = pd.read_csv(fname_Reflectance, sep=";", header=0)
         Reflectance_table = data_Reflectance.iloc[:, 1:].to_numpy()
 
-        # Read the Reflectance Uncertainty CSV
-        fname_unc_Reflectance  = unc_reflectance_list[i_pair]
-        logf.write(f"Incoming uncertainty: {fname_unc_Reflectance}\n")
-        data_unc_Reflectance  = pd.read_csv(fname_unc_Reflectance, sep=";", header=0)
-        unc_Reflectance_table = data_unc_Reflectance.iloc[:, 1:].to_numpy()
-        
         # Read the Incoming CSV
         fname_Lin = Lin_list[i_pair]
         logf.write(f"Incoming: {fname_Lin}\n")
         data_Lin = pd.read_csv(fname_Lin, sep=";", header=0)
         Lin_table = data_Lin.iloc[:, 1:].to_numpy()
 
+        # Read the Reflectance Uncertainty CSV
+        if uncertainty_as_input:
+            fname_unc_Reflectance = unc_reflectance_list[i_pair]
+            logf.write(f"Uncertainty: {fname_unc_Reflectance}\n")
+            data_unc_Reflectance = pd.read_csv(fname_unc_Reflectance, sep=";", header=0)
+            unc_Reflectance_table = data_unc_Reflectance.iloc[:, 1:].to_numpy()
+        else:
+            logf.write(f"Uncertainty: to be computed\n")
+        
+        
         #!!! Check consistency of file names: assume that the last 6 digits before .csv must be equal
         base_name_Reflectance = os.path.basename(fname_Reflectance)[-10:-4]  # Remove .csv extension
-        base_name_unc_Reflectance = os.path.basename(fname_unc_Reflectance)[-10:-4]
         base_name_Lin = os.path.basename(fname_Lin)[-10:-4]
-        if not base_name_Reflectance == base_name_unc_Reflectance == base_name_Lin:
+
+        if uncertainty_as_input:
+            base_name_unc_Reflectance = os.path.basename(fname_unc_Reflectance)[-10:-4]
+            consistent = (base_name_Reflectance == base_name_unc_Reflectance == base_name_Lin)
+        else:
+            consistent = (base_name_Reflectance == base_name_Lin)
+
+        if not consistent:
             msg = f"Warning: Inconsistent file names for pair {i_pair+1}"
             logf.write(msg + "\n")
             logf.flush()
             raise ValueError(msg)
 
-        #get only once (from Reflectance), assuming all files have the same wavelength (first column) and UTC timestamp (first row)
+        #get only once:
+        # #1) (from Reflectance), assuming all files have the same wavelength (first column) and UTC timestamp (first row)
+        # 2) (from uncertainty file, if not given as input) get the uncertainty values for the wavelength grid of the input spectra, to be used as input in the retrieval
         wvl_qepro = data_Reflectance.iloc[:, 0].to_numpy()
         utc_column = data_Reflectance.columns[1:]
 
         # Wavelength Definition
         lb = np.argmin(np.abs(wvl_qepro - wvlRet[0]))
         ub = np.argmin(np.abs(wvl_qepro - wvlRet[1]))
-
-        # Spectral subset of input spectra to min_wvl - max_wvl range
         wvl_sub = wvl_qepro[lb:ub+1]
-        Reflectance = Reflectance_table[lb:ub+1, :]
-        unc_Reflectance = unc_Reflectance_table[lb:ub+1, :]
-        Lin = Lin_table[lb:ub+1, :] * 1e3 #convert Lin from W to mW.
 
-        # Replace NaN and inf values with zeros (or a small number) to avoid issues in processing
+        #read, mask and interpolate relative uncertainty values of Lin and Lout
+        if not uncertainty_as_input:
+            wl_unc = unc_data["wl_unc"].flatten()
+            L_down_unc = unc_data["L_down_unc"].flatten()
+            L_up_unc = unc_data["L_up_unc"].flatten()
+
+            # Filter valid ranges [0, 5]
+            mask_down = (L_down_unc >= 0) & (L_down_unc < 5)
+            mask_up = (L_up_unc >= 0) & (L_up_unc < 5)
+
+            wl_unc_down, val_down = wl_unc[mask_down], L_down_unc[mask_down]
+            wl_unc_up, val_up = wl_unc[mask_up], L_up_unc[mask_up]
+
+            flox_unc_down = np.interp(wvl_sub, wl_unc_down, val_down, left=np.nan, right=np.nan) \
+                if wl_unc_down.size > 1 else np.full_like(wvl_sub, np.nan)
+            flox_unc_up = np.interp(wvl_sub, wl_unc_up, val_up, left=np.nan, right=np.nan) \
+                if wl_unc_up.size > 1 else np.full_like(wvl_sub, np.nan)
+
+        # Spectral subset of input spectra to min_wvl - max_wvl range;  # Replace NaN and inf values with zeros (or a small number) to avoid issues in processing
         #!!! is it right to fix to 0 ?
+        Reflectance = Reflectance_table[lb:ub+1, :]
         Reflectance = np.nan_to_num(Reflectance, nan=0.0, posinf=0.0, neginf=0.0) 
-        unc_Reflectance = np.nan_to_num(unc_Reflectance, nan=0.0, posinf=0.0, neginf=0.0)
+        Lin = Lin_table[lb:ub+1, :] * 1e3 #convert Lin from W to mW.
         Lin = np.nan_to_num(Lin, nan=0.0, posinf=0.0, neginf=0.0)
+        if uncertainty_as_input:
+            unc_Reflectance = unc_Reflectance_table[lb:ub+1, :]
+        else:
+            Lin_unc = flox_unc_down[:, np.newaxis] * Lin
+            Lout_unc = flox_unc_up[:, np.newaxis] * Lin * Reflectance
+            #this is the relative unc propagation forumla, using only reflectance and Lin, so Lout = Rreflectance * Lin
+            unc_Reflectance = (np.sqrt(Lout_unc**2 + (Reflectance * Lin_unc)**2 ))/Lin
+        
+        unc_Reflectance = np.nan_to_num(unc_Reflectance, nan=0.0, posinf=0.0, neginf=0.0)  
 
         # Compute UTC_time for the header information (from Reflectance)
         utc_time = [header.strip() for header in utc_column]
