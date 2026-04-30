@@ -198,7 +198,7 @@ def FLOX_processing_master(data_path, uncertainty_path, cov_path, uncertainty_as
         Lin = np.nan_to_num(Lin, nan=0.0, posinf=0.0, neginf=0.0)
 
         valid_cols = np.all(AppReflectance >= 0, axis=0)
-        logf.write(f"Spectra not processed (AppReflectance<0), indices : ~valid_cols\n")
+        logf.write(f"Spectra not processed (AppReflectance<0), indices: {np.where(~valid_cols)[0]}\n")
         logf.flush()
         
         AppReflectance = AppReflectance[:, valid_cols]
