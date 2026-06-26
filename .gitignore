@@ -2,7 +2,7 @@ __pycache__/
 *.pyc
 IPF/
 
-# Data files (IMPORTANT for your project)
+# Data files
 test_nc/
 test_csv_no_unc/
 test_csv_unc/

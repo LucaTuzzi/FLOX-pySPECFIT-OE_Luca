@@ -15,8 +15,8 @@ data_folder = "test_csv_unc"
 #data_nc = "RadIrrRef_FLOX_FLUO_2026-6-15_9_28_49.nc" #used only if nc_input is True. It should be the name of the .nc file to be processed, which should be in the data_folder
 
 # Control flags
-nc_input= False # in this case, data_nc is required to be the .nc file itself
-uncertainty_as_input = False #if True, the uncertainty is read from the csv files in the data folder, if False it is computed. In case of nc_input=True, the uncertainty is read from the .nc file itself.
+nc_input= True # in this case, data_nc is required to be the .nc file itself
+uncertainty_as_input = True #if True, the uncertainty is read from the csv files in the data folder, if False it is computed. In case of nc_input=True, the uncertainty is read from the .nc file itself.
 short_case = True #for testing purposes, if True it only run a subset of the data
 SIF_unc_MC = True
 parallel = True
