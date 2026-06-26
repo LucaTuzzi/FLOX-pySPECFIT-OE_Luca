@@ -1,5 +1,3 @@
-#WIP!!!
-
 import os
 import glob
 import numpy as np
@@ -13,9 +11,9 @@ from src.FLOX_processing import FLOX_processing
 #from src.FLOX_processing_NotParallel import FLOX_processing
 import time
 import xarray as xr
+from src.FLOX_mask import FLOX_mask
 
-
-def FLOX_processing_master_nc(data_path, data_nc, cov_path, nc_input=True, uncertainty_as_input=True, SIF_unc_MC=True, parallel=False, short_case=False,):
+def FLOX_processing_master_nc(data_path, data_nc, cov_path, uncertainty_as_input=True, SIF_unc_MC=True, parallel=False, short_case=False,mask_time_doy = False,):
     """
     Method that orchestrates FLOX data retrieval from nc files
 
@@ -23,18 +21,20 @@ def FLOX_processing_master_nc(data_path, data_nc, cov_path, nc_input=True, uncer
         data_path (str): Directory path where CSV data files are located
         data_nc (str): Name of the .nc file containing the main data
         cov_path (str): Path to the .mat file containing the inverse covariances
-        nc_input (bool): Whether the input is a single .nc file
         uncertainty_as_input (bool): Whether to use input uncertainty values
         SIF_unc_MC (bool): Whether to use Monte Carlo sampling for SIF uncertainty
         parallel (bool): Whether to use parallel processing
         short_case (bool): Only for testing purposes, if True to run only a subset of the data
     """
 
+    output_path = os.path.join(data_path, "output")
+    os.makedirs(output_path, exist_ok=True)
+    
     start_time = time.time()
 
     # Initialize log file
     proc_time_all = datetime.now().strftime("%Y%m%d_%H_%M_%S")
-    logfile_name = os.path.join(data_path, f"{proc_time_all}_logfile.txt")
+    logfile_name = os.path.join(output_path, f"{proc_time_all}_logfile.txt")
 
     logf = open(logfile_name, "w", encoding="utf-8")
     logf.write(f"FLOX_processing_master started at {proc_time_all}\n")
@@ -47,12 +47,14 @@ def FLOX_processing_master_nc(data_path, data_nc, cov_path, nc_input=True, uncer
     # Log the input arguments:
     logf.write(f"data_path   = {data_path}\n")
     logf.write(f"uncertainty_path = {data_path}\n")
+    logf.write(f"output_path = {output_path}\n")
     logf.write(f"cov_path         = {cov_path}\n")
     logf.write(f"uncertainty_as_input = {uncertainty_as_input}\n")
     logf.write(f"data_nc = {data_nc}\n")
     logf.write(f"SIF_unc_MC = {SIF_unc_MC}\n")
     logf.write(f"parallel = {parallel}\n")
-    logf.write(f"short_case = {short_case}\n")  
+    logf.write(f"short_case = {short_case}\n")
+    logf.write(f"mask_time_doy = {mask_time_doy}\n")
     logf.flush()
 
     sa, xa_mean = load_inverse_covariance(cov_path)
@@ -74,73 +76,94 @@ def FLOX_processing_master_nc(data_path, data_nc, cov_path, nc_input=True, uncer
     allr_specfit = None         # Reflectance    
     allar_unc = None            # Apparent Reflectance uncertainty 
 
-    if nc_input:
-
-        if not uncertainty_as_input:
-            msg = ("Warning: proceeding with input uncertainty even though uncertainty_as_input = False, as it is included in the NetCDF file:\n")
-            logf.write(msg + "\n")
-            logf.flush()
-
-
-        nc_path = os.path.join(data_path, data_nc)
-        logf.write(f"\nProcessing file {nc_path} \n")
+    if not uncertainty_as_input:
+        msg = ("Warning: proceeding with input uncertainty even though uncertainty_as_input = False, as it is included in the NetCDF file:\n")
+        logf.write(msg + "\n")
         logf.flush()
 
-        ds = xr.open_dataset(nc_path)
 
-        # Wavelength Definition
-        wvl_qepro = ds["wavelength"].values
-        lb = np.argmin(np.abs(wvl_qepro - wvlRet[0]))
-        ub = np.argmin(np.abs(wvl_qepro - wvlRet[1]))
-        wvl_sub = wvl_qepro[lb:ub+1]
-        
-        #Spectra Definition
-        AppReflectance_ds = ds["R"]
-        
-        # check AppReflectance_ds.dims (wavelength, UTC_time)
-        if not(AppReflectance_ds.dims[0] == "wavelength" and AppReflectance_ds.dims[1] == "UTC_time"):
-            msg = ("Error: invalid data format\n")
-            logf.write(msg + "\n")
-            logf.flush()
-            raise ValueError(msg)
+    nc_path = os.path.join(data_path, data_nc)
+    logf.write(f"\nProcessing file {nc_path} \n")
+    logf.flush()
 
-        AppReflectance = AppReflectance_ds.values[lb:ub+1, :]
-        AppReflectance = np.nan_to_num(AppReflectance, nan=0.0, posinf=0.0, neginf=0.0)
-        valid_cols = np.all(AppReflectance >= 0, axis=0)
-        logf.write(f"Spectra not processed (AppReflectance<0), indices: {np.where(~valid_cols)[0]}\n")
+    ds = xr.open_dataset(nc_path)
+
+    # Wavelength Definition
+    wvl_qepro = ds["wavelength"].values
+    lb = np.argmin(np.abs(wvl_qepro - wvlRet[0]))
+    ub = np.argmin(np.abs(wvl_qepro - wvlRet[1]))
+    wvl_sub = wvl_qepro[lb:ub+1]
+    
+    #Spectra Definition
+    AppReflectance_ds = ds["R"]
+    
+    # check AppReflectance_ds.dims (wavelength, UTC_time)
+    if not(AppReflectance_ds.dims[0] == "wavelength" and AppReflectance_ds.dims[1] == "UTC_time"):
+        msg = ("Error: invalid data format\n")
+        logf.write(msg + "\n")
         logf.flush()
-        AppReflectance = AppReflectance[:, valid_cols]
-        
-        u_R_systematic = ds["u_R_systematic"].values[lb:ub+1, valid_cols]
-        u_R_systematic = np.nan_to_num(u_R_systematic, nan=0.0, posinf=0.0, neginf=0.0) 
-        u_R_random = ds["u_R_random"].values[lb:ub+1, valid_cols]
-        u_R_random = np.nan_to_num(u_R_random, nan=0.0, posinf=0.0, neginf=0.0) 
-        unc_AppReflectance = (u_R_systematic*u_R_systematic + u_R_random*u_R_random)**0.5
-        unc_AppReflectance = np.nan_to_num(unc_AppReflectance, nan=0.0, posinf=0.0, neginf=0.0) 
-        logf.write(f"\nComputing unc_AppReflectance as u_R_systematic**2 + u_R_random**2)**0.5\n")
+        raise ValueError(msg)
+
+    AppReflectance = AppReflectance_ds.values[lb:ub+1, :]
+    AppReflectance = np.nan_to_num(AppReflectance, nan=0.0, posinf=0.0, neginf=0.0)
+    valid_cols = np.all(AppReflectance >= 0, axis=0)
+    logf.write(f"Spectra not processed (AppReflectance<0), indices:\n{np.where(~valid_cols)[0]}")
+    logf.flush()
+    AppReflectance = AppReflectance[:, valid_cols]
+    
+    u_R_systematic = ds["u_R_systematic"].values[lb:ub+1, valid_cols]
+    u_R_systematic = np.nan_to_num(u_R_systematic, nan=0.0, posinf=0.0, neginf=0.0) 
+    u_R_random = ds["u_R_random"].values[lb:ub+1, valid_cols]
+    u_R_random = np.nan_to_num(u_R_random, nan=0.0, posinf=0.0, neginf=0.0) 
+    unc_AppReflectance = (u_R_systematic*u_R_systematic + u_R_random*u_R_random)**0.5
+    unc_AppReflectance = np.nan_to_num(unc_AppReflectance, nan=0.0, posinf=0.0, neginf=0.0) 
+    logf.write(f"\nComputing unc_AppReflectance as (u_R_systematic**2 + u_R_random**2)**0.5\n")
+    logf.flush()
+
+    Lout = ds["L"].values[lb:ub+1, valid_cols] * 1e3
+    Lin = Lout/AppReflectance
+    
+    utc_time = ds["UTC_time"].values[valid_cols]
+    dt_time = pd.to_datetime(utc_time)
+    utc_datime_str = dt_time.strftime("%d-%b-%Y %H:%M:%S").to_numpy()
+    frac_day = ((dt_time - dt_time.normalize()) / pd.Timedelta(days=1)).to_numpy()
+    doy_day_frac = dt_time.dayofyear.astype(float) + frac_day
+    
+    ds.close()
+
+    if short_case:
+        start_temp=0
+        end_temp=230
+        AppReflectance = AppReflectance[:,start_temp:end_temp]
+        Lin= Lin[:,start_temp:end_temp]
+        unc_AppReflectance  = unc_AppReflectance[:,start_temp:end_temp]
+        utc_datime_str = utc_datime_str[start_temp:end_temp]
+        doy_day_frac = doy_day_frac[start_temp:end_temp]
+        logf.write(f"\nShort case applied: columns {start_temp}:{end_temp} "
+               f"(kept {end_temp - start_temp} elements)\n")
         logf.flush()
 
-        Lout = ds["L"].values[lb:ub+1, valid_cols] * 1e3
-        Lin = Lout/AppReflectance
-        
-        utc_time = ds["UTC_time"].values[valid_cols]
-        utc_datime_str = pd.to_datetime(utc_time).strftime("%d-%b-%Y %H:%M:%S").tolist()
-        dt = pd.to_datetime(utc_time)
-        frac_day = ((dt - dt.normalize()) / pd.Timedelta(days=1))
-        doy_day_frac = dt.dayofyear.astype(float) + frac_day.to_numpy()
-        
-        ds.close()
 
-        if short_case:
-            start_temp=0
-            end_temp=230
-            AppReflectance = AppReflectance[:,start_temp:end_temp]
-            Lin= Lin[:,start_temp:end_temp]
-            unc_AppReflectance  = unc_AppReflectance[:,start_temp:end_temp]
-            utc_datetime_str = utc_datetime_str[start_temp:end_temp]
-            doy_day_frac = doy_day_frac[start_temp:end_temp]
 
-    s=1
+    if mask_time_doy:
+        date_range = ("2026-04-24", "2026-04-26")
+        time_ranges=[("10:00", "10:30")]
+        doy_range = None
+        mask_temp = FLOX_mask(doy_day_frac, utc_datime_str, doy_range=doy_range, date_range = date_range, time_ranges=time_ranges)
+        mask_cols = np.where(mask_temp)[0]
+
+        AppReflectance = AppReflectance[:, mask_cols]
+        Lin = Lin[:, mask_cols]
+        unc_AppReflectance = unc_AppReflectance[:, mask_cols]
+        utc_datime_str = utc_datime_str[mask_cols].tolist()
+        doy_day_frac = doy_day_frac[mask_cols].tolist()
+
+        logf.write(f"\nTime/DOY mask applied:\n"
+            f"  date_range = {date_range}\n"
+            f"  time_ranges = {time_ranges}\n"
+            f"  remaining elements = {len(mask_cols)}\n")
+        logf.flush()
+
     # === FLOX Data Processing ===
     (
         sif,                # Retrieved SIF spectrum (array)
@@ -213,7 +236,7 @@ def FLOX_processing_master_nc(data_path, data_nc, cov_path, nc_input=True, uncer
         allar_unc = np.concatenate([allar_unc, app_ref_unc], axis=1)
         all_utc_datetime_str.extend(utc_datime_str)
 
-    logf.write(f"Finished file {1}. Processed {n_spectra} spectra.\nFailed {len(failed_spectra)}, indices: {[x + 1 for x in failed_spectra]} .\n")
+    logf.write(f"Finished file {1} of {1}. Processed {n_spectra} spectra.\nFailed {len(failed_spectra)}, indices: \n{[x + 1 for x in failed_spectra]}.\n")
     logf.flush()
 
     # write output files
@@ -231,28 +254,28 @@ def FLOX_processing_master_nc(data_path, data_nc, cov_path, nc_input=True, uncer
         "SIF_O2B_un",
         "SIF_O2A_un"]
 
-    final_sif_params_name = os.path.join(data_path,f"{proc_time_all}_pySPECFIT-OE_SIF_metrics.txt")
+    final_sif_params_name = os.path.join(output_path,f"{proc_time_all}_pySPECFIT-OE_SIF_metrics.txt")
     write_csv_with_headers(final_sif_params_name, allm_specfit, out_header)
 
     col_headers = ["wvl"] + all_utc_datetime_str
     arr_f_specfit = np.column_stack([wvl_out, allf_specfit])
-    final_sif_name = os.path.join(data_path, f"{proc_time_all}_pySPECFIT-OE_SIF_spectrum.txt")
+    final_sif_name = os.path.join(output_path, f"{proc_time_all}_pySPECFIT-OE_SIF_spectrum.txt")
     write_csv_with_headers(final_sif_name, arr_f_specfit, col_headers)
 
     arr_f_unc_specfit = np.column_stack([wvl_out, allf_unc_specfit])
-    final_sif_unc_name = os.path.join(data_path, f"{proc_time_all}_pySPECFIT-OE_SIF_spectrum_uncertainty.txt")
+    final_sif_unc_name = os.path.join(output_path, f"{proc_time_all}_pySPECFIT-OE_SIF_spectrum_uncertainty.txt")
     write_csv_with_headers(final_sif_unc_name, arr_f_unc_specfit, col_headers)
 
     arr_r_specfit = np.column_stack([wvl_out, allr_specfit])
-    final_r_name = os.path.join(data_path, f"{proc_time_all}_pySPECFIT-OE_REFLECTANCE_spectrum.txt")
+    final_r_name = os.path.join(output_path, f"{proc_time_all}_pySPECFIT-OE_REFLECTANCE_spectrum.txt")
     write_csv_with_headers(final_r_name, arr_r_specfit, col_headers)
 
     arr_ar_unc = np.column_stack([wvl_out, allar_unc])
-    final_ar_name = os.path.join(data_path, f"{proc_time_all}_pySPECFIT-OE_APPARENT_REFLECTANCE_UNCERTAINTY.txt")
+    final_ar_name = os.path.join(output_path, f"{proc_time_all}_pySPECFIT-OE_APPARENT_REFLECTANCE_UNCERTAINTY.txt")
     write_csv_with_headers(final_ar_name, arr_ar_unc, col_headers)
     
     write_results_to_netcdf(
-        output_path=data_path,
+        output_path=output_path,
         proc_time=proc_time_all,
         wavelengths=wvl_out,
         timestamps=all_utc_datetime_str,
