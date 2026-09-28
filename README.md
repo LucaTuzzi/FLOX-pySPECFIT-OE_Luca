@@ -74,7 +74,8 @@ The following diagram shows the internal structure of the SIF retrieval engine i
     │
     ├── load_inverse_covariance()         (FLOX_functions.py)
     ├── write_csv_with_headers()          (FLOX_functions.py)
-    └── write_results_to_netcdf()         (FLOX_functions.py)
+    ├── write_results_to_netcdf()         (FLOX_functions.py)
+    └── FLOX_mask()                       (FLOX_mask.py)
 
 Retrieval core*   (sif_retrieval_IPF_v2_1_modified.py)
 │
