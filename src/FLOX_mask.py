@@ -2,16 +2,13 @@ import numpy as np
 import pandas as pd
 
 
-def FLOX_mask(doy_day_frac, utc_datetime_str,
-                    doy_range=None, date_range=None, time_ranges=None):
+def FLOX_mask(doy_day_frac, utc_datetime_str, doy_range=None, date_range=None, time_ranges=None):
 
     """
     Build a boolean time mask for FLOX processing.
-    doy_range : (start_doy, end_doy)
-    date_range : (start_date, end_date)
-        Example: ("2026-04-14", "2026-04-16")
-    time_ranges : list of ("HH:MM", "HH:MM")
-        Example: [("12:00","12:05"), ("14:00","16:30")]
+    doy_range : (start_doy, end_doy)               Example: ("124", "140")
+    date_range : (start_date, end_date)            Example: ("2026-04-14", "2026-04-16")
+    time_ranges : list of ("HH:MM", "HH:MM")       Example: [("12:00","12:05"), ("14:00","16:30")]
     """
 
     mask = np.ones(len(doy_day_frac), dtype=bool)

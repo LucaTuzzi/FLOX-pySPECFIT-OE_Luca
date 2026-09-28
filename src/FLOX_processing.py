@@ -9,13 +9,14 @@ def FLOX_processing(
             app_ref_unc_array,
             Lin_array,        # Incident radiance (Lin) only in arho_sim = rho + fluorescence / Lin
             sa,         # covariance matrix
-            xa_mean,
-            SIF_unc_MC,                # mean state vector
-            parallel = False
+            xa_mean,    # mean state vector
+            SIF_unc_MC,                
+            parallel = False,
+            n_jobs=-1
     ):
 
     if parallel:
-        from joblib import Parallel, delayed
+        from joblib import Parallel, delayed, parallel_config
         from tqdm_joblib import tqdm_joblib
         
 
@@ -65,25 +66,23 @@ def FLOX_processing(
    
     # SWITCH PARALLEL / SERIAL
     if parallel:
-        # avoid oversubscription
-        os.environ["OMP_NUM_THREADS"] = "1"
-        os.environ["MKL_NUM_THREADS"] = "1"
 
-        with tqdm_joblib(tqdm(total=n_spectra, desc="Processing spectra", unit="spectra")):
-            results = Parallel(n_jobs=-1, backend="loky")(
-                delayed(process_spectrum)(
-                    num_spec,
-                    wvl,
-                    Lin_array,
-                    app_ref_array,
-                    app_ref_unc_array,
-                    xa_mean,
-                    sa,
-                    l2b_wavelength_grid,
-                    SIF_unc_MC
+        with parallel_config(backend="loky", inner_max_num_threads=1):
+            with tqdm_joblib(tqdm(total=n_spectra, desc="Processing spectra", unit="spectra")):
+                results = Parallel(n_jobs=n_jobs,)(
+                    delayed(process_spectrum)(
+                        num_spec,
+                        wvl,
+                        Lin_array,
+                        app_ref_array,
+                        app_ref_unc_array,
+                        xa_mean,
+                        sa,
+                        l2b_wavelength_grid,
+                        SIF_unc_MC
+                    )
+                    for num_spec in range(n_spectra)
                 )
-                for num_spec in range(n_spectra)
-            )
 
         # results pick up and error handling    
         for num_spec, reflectance, sif, sif_unc, err in results:
@@ -135,9 +134,15 @@ def FLOX_processing(
             sif_farred_peak_wl,
             sif_o2a_band,
             sif_integrated,
+            sif_red_peak_uncertainty,
+            sif_red_peak_wl_uncertainty,
             sif_o2b_uncertainty,
-            sif_o2a_uncertainty
+            sif_farred_peak_uncertainty,
+            sif_farred_peak_wl_uncertainty,
+            sif_o2a_uncertainty,
+            sif_integrated_uncertainty,
     ) = sif_parms_flox(l2b_wavelength_grid, sif_array, sif_array_u)
+
 
 
     # --- Return all processed outputs ---
@@ -154,13 +159,19 @@ def FLOX_processing(
         sif_farred_peak_wl,      # Wavelength of maximum SIF at far-red peak
         sif_o2a_band,            # SIF at O₂-A absorption band
         sif_integrated,          # Spectrally integrated SIF
-        sif_o2a_uncertainty,     # Uncertainty of SIF at O₂-A band
-        sif_o2b_uncertainty,     # Uncertainty of SIF at O₂-B band
+        sif_red_peak_uncertainty,
+        sif_red_peak_wl_uncertainty,
+        sif_o2b_uncertainty,
+        sif_farred_peak_uncertainty,
+        sif_farred_peak_wl_uncertainty,
+        sif_o2a_uncertainty,
+        sif_integrated_uncertainty,
         app_ref_unc_array,       # Uncertainty of apparent reflectance
         failed_spectra       # List of spectra indices that failed during retrieval
     )
 
 def sif_parms_flox(wl, sif, sif_un):
+    
     """
     Extracts key SIF metrics (red peak, far-red peak,
     O2-B, O2-A, integrated SIF, etc.) from the retrieved fluorescence.
@@ -185,27 +196,31 @@ def sif_parms_flox(wl, sif, sif_un):
     # max
     red_indices = wl < 690
     sif_r = sif[red_indices, :]
-    sif_r_max = np.max(sif_r, axis=0)
-    id = np.argmax(sif_r, axis=0)
-    sif_r_wl = wl[red_indices][id]
+    idx_r_max = np.argmax(sif_r, axis=0)
+    
+    sif_r_wl  = wl[red_indices][idx_r_max]
+    sif_r_max = sif_r[idx_r_max, np.arange(sif_r.shape[1])]
+    sif_r_max_un = sif_un[red_indices][idx_r_max,np.arange(sif_r.shape[1])]
 
     # SIF at O2-B 687nm
-    ii = np.argmin(np.abs(wl - 687))
-    sif_o2b = sif[ii, :]
-    sif_o2b_un = sif_un[ii, :]
-
+    iio2b = np.argmin(np.abs(wl - 687))
+    sif_o2b = sif[iio2b, :]
+    sif_o2b_un = sif_un[iio2b, :]
+    
     # FAR-RED SIF
+    # max
     far_red_indices = wl > 720
     sif_fr = sif[far_red_indices, :]
-    sif_fr_max = np.max(sif_fr, axis=0)
-    p = np.argmax(sif_fr, axis=0)
-    x = wl[far_red_indices]
-    sif_fr_wl = x[p]
+    idx_fr_max = np.argmax(sif_fr, axis=0)
+
+    sif_fr_wl = wl[far_red_indices][idx_fr_max]
+    sif_fr_max = sif_fr[idx_fr_max, np.arange(sif_fr.shape[1])]
+    sif_fr_max_un = sif_un[far_red_indices][idx_fr_max, np.arange(sif_fr.shape[1])]
 
     # SIF at O2-A 760nm
-    ii = np.argmin(np.abs(wl - 760))
-    sif_o2a = sif[ii, :]
-    sif_o2a_un = sif_un[ii, :]
+    iio2a = np.argmin(np.abs(wl - 760))
+    sif_o2a = sif[iio2a, :]
+    sif_o2a_un = sif_un[iio2a, :]
 
     # Spectrally integrated SIF
     #compatibility check for numpy version.
@@ -213,9 +228,20 @@ def sif_parms_flox(wl, sif, sif_un):
         sif_int = np.trapezoid(sif, wl, axis=0)
     else:
         sif_int = np.trapz(sif, wl, axis=0)
-
-    return (sif_r_max, sif_r_wl, sif_o2b, sif_fr_max,
-            sif_fr_wl, sif_o2a, sif_int, sif_o2b_un, sif_o2a_un)
+    # unc computation
+    w = np.zeros_like(wl)
+    w[0] = (wl[1] - wl[0])
+    w[-1] = (wl[-1] - wl[-2])
+    w[1:-1] = (wl[2:] - wl[:-2])
+    w = w[:, None]
+    sif_int_un = np.sqrt(np.sum((w * sif_un)**2, axis=0)) /2 #!!! to be done
+    
+    #unc on wl set to NAN
+    sif_r_wl_un = np.full(sif_int_un.shape, np.nan)
+    sif_fr_wl_un = np.full(sif_int_un.shape, np.nan)
+    
+    return (sif_r_max,    sif_r_wl,    sif_o2b,     sif_fr_max,    sif_fr_wl,    sif_o2a,    sif_int,
+            sif_r_max_un, sif_r_wl_un, sif_o2b_un,  sif_fr_max_un, sif_fr_wl_un, sif_o2a_un, sif_int_un)
 
 
 def process_spectrum(num_spec,wvl,Lin_array,app_ref_array,app_ref_unc_array,xa_mean,sa,l2b_wavelength_grid,SIF_unc_MC):
@@ -254,3 +280,7 @@ def process_spectrum(num_spec,wvl,Lin_array,app_ref_array,app_ref_unc_array,xa_m
 
     except Exception as e:
         return num_spec, None, None, None, e
+    
+
+
+    

@@ -65,11 +65,8 @@ def write_csv_with_headers(filename, data2d, headers):
         headers (list): list of column headers (strings), length matches data2d.shape[1]
     """
     out_table = pd.DataFrame(data2d, columns=headers)
-    out_table.to_csv(filename, sep=";", index=False,
-                     na_rep="NaN", float_format="%.6f")
+    out_table.to_csv(filename, sep=";", index=False, na_rep="NaN", float_format="%.6f")
     
-
-
 
 def write_results_to_netcdf(
     output_path,
@@ -127,8 +124,13 @@ def write_results_to_netcdf(
         "SIF_O2B",
         "SIF_O2A",
         "SIF_int",
+        "SIF_RED_max_un",
+        "SIF_RED_max_wvl_un",
         "SIF_O2B_un",
-        "SIF_O2A_un"
+        "SIF_FARRED_max_un",
+        "SIF_FARRED_max_wvl_un",
+        "SIF_O2A_un",
+        "SIF_int_un"
     ]
 
     with Dataset(netcdf_file, "w", format="NETCDF4") as nc:

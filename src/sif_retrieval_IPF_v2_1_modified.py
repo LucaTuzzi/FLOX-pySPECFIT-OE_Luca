@@ -253,6 +253,7 @@ def _analytical_barycenter(c, w, k, aw, wvl_min, wvl_max):
     g3 = gamma(1 / k) * gammainc(1 / k, arg1)
     g4 = gamma(1 / k) * gammainc(1 / k, arg2)
 
+
     # Calculate m with numerical stability
     numerator = (w + aw) ** 2 * g2 - (w - aw) ** 2 * g1
     denominator = (w + aw) * g4 + (w - aw) * g3
@@ -367,7 +368,7 @@ def _l2b_regularized_cost_function_optimization(
     # First rough estimation
     idx_free = np.array([0, 3, 4] + list(range(8, n_x)))  
 
-    for iter in range(2):
+    for iter in range(3):
         # Reduce problem to free variables
         k0_redu = k0[:, idx_free]
         sa_redu = sa[np.ix_(idx_free, idx_free)]
@@ -688,7 +689,7 @@ def _jacobian_calculation(func, x, wvl, epsilon=np.float64(1e-6), full_numerical
     #!!!!need dimensional check in each case
     return jac_combined, dx_dF 
 
-def _jacobian_calculation_analytical(x, wvl, Lin):
+def _jacobian_calculation_analytical(x, wvl, Lin, ds=1e-6):
     '''
         [0] : Red peak amplitude (I_red)
         [1] : Red peak center wavelength (λ_red) [nm]
@@ -824,10 +825,20 @@ def _jacobian_calculation_analytical(x, wvl, Lin):
     dt1dp = t1*np.log(t1_base)
     dt2dp = t2*np.log(t2_base)
 
-    dgs_g1 = gamma_s_derivative(t1, s2)
-    dgs_g3 = gamma_s_derivative(t1, s1)
-    dgs_g2 = gamma_s_derivative(t2, s2)
-    dgs_g4 = gamma_s_derivative(t2, s1)
+#    dgs_g1 = gamma_s_derivative(t1, s2)
+#    dgs_g3 = gamma_s_derivative(t1, s1)
+#    dgs_g2 = gamma_s_derivative(t2, s2)
+#    dgs_g4 = gamma_s_derivative(t2, s1)
+
+    gamma_s2_plus = gamma(s2 + ds)
+    gamma_s2_minus = gamma(s2 - ds)
+    gamma_s1_plus = gamma(s1 + ds)
+    gamma_s1_minus = gamma(s1 - ds)
+    
+    dgs_g1 = (gammainc(s2 + ds, t1) * gamma_s2_plus - gammainc(s2 - ds, t1) * gamma_s2_minus) / (2.0 * ds)
+    dgs_g3 = (gammainc(s1 + ds, t1) * gamma_s1_plus - gammainc(s1 - ds, t1) * gamma_s1_minus) / (2.0 * ds)
+    dgs_g2 = (gammainc(s2 + ds, t2) * gamma_s2_plus - gammainc(s2 - ds, t2) * gamma_s2_minus) / (2.0 * ds)
+    dgs_g4 = (gammainc(s1 + ds, t2) * gamma_s1_plus - gammainc(s1 - ds, t2) * gamma_s1_minus) / (2.0 * ds)
 
     dg1dx7 = sgn*(dgs_g1*ds2dp + dgdt_g1*dt1dp)
     dg3dx7 = sgn*(dgs_g3*ds1dp + dgdt_g3*dt1dp)
