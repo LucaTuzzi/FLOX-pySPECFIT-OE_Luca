@@ -1,5 +1,4 @@
 import numpy as np
-import os
 from src.sif_retrieval_IPF_v2_1_modified import _l2b_regularized_cost_function_optimization
 from tqdm import tqdm
 
@@ -45,6 +44,7 @@ def FLOX_processing(
             sif_o2a_uncertainty     # Uncertainty of SIF at O₂-A band
             sif_o2b_uncertainty     # Uncertainty of SIF at O₂-B band
             app_ref_unc              # Uncertainty of apparent reflectance)
+            ...
     """
 
     # Initialize output arrays
@@ -79,7 +79,8 @@ def FLOX_processing(
                         xa_mean,
                         sa,
                         l2b_wavelength_grid,
-                        SIF_unc_MC
+                        SIF_unc_MC,
+                        n_spectra,
                     )
                     for num_spec in range(n_spectra)
                 )
@@ -107,7 +108,8 @@ def FLOX_processing(
                     xa_mean,
                     sa,
                     l2b_wavelength_grid,
-                    SIF_unc_MC
+                    SIF_unc_MC,
+                    n_spectra,
                 )
                 if err is not None:
                     raise err
@@ -183,8 +185,8 @@ def sif_parms_flox(wl, sif, sif_un):
         sif_un (np.ndarray): solar induced fluorescence uncertainties
 
     Returns:
-        list[np.ndarray]: sif_r_max, sif_r_wl, sif_o2b, sif_fr_max,
-            sif_fr_wl, sif_o2a, sif_int, sif_o2b_un, sif_o2a_un
+        list[np.ndarray]: sif_r_max,    sif_r_wl,    sif_o2b,     sif_fr_max,    sif_fr_wl,    sif_o2a,    sif_int,
+            sif_r_max_un, sif_r_wl_un, sif_o2b_un,  sif_fr_max_un, sif_fr_wl_un, sif_o2a_un, sif_int_un
     """
 
     # Ensure inputs are numpy arrays
@@ -244,24 +246,23 @@ def sif_parms_flox(wl, sif, sif_un):
             sif_r_max_un, sif_r_wl_un, sif_o2b_un,  sif_fr_max_un, sif_fr_wl_un, sif_o2a_un, sif_int_un)
 
 
-def process_spectrum(num_spec,wvl,Lin_array,app_ref_array,app_ref_unc_array,xa_mean,sa,l2b_wavelength_grid,SIF_unc_MC):
+def process_spectrum(num_spec,wvl,Lin_array,app_ref_array,app_ref_unc_array,xa_mean,sa,l2b_wavelength_grid,SIF_unc_MC,n_spectra):
     try:
-        # --- estrazione dati ---
+        #parameters
+        lmb = 1e-4 # inversion parameter
+        eps = 1e-15
+        # spectra estraction
         Lin = Lin_array[:, num_spec]
         app_ref = app_ref_array[:, num_spec]
         app_ref_unc = app_ref_unc_array[:, num_spec]
 
-        # --- covarianza ---
+        # covariance
         app_ref_variance = app_ref_unc**2
         with np.errstate(divide='ignore', invalid='ignore'):
-            eps = 1e-15
             inv_app_ref_variance = np.where(app_ref_variance > eps,
-                                            1.0 / app_ref_variance,
-                                            0.0)
+                1.0 / app_ref_variance, 0.0)
+            
         sy = np.diag(inv_app_ref_variance)
-
-        # --- inversione ---
-        lmb = 1e-4
 
         reflectance, sif, sif_unc = _l2b_regularized_cost_function_optimization(
             wvl,

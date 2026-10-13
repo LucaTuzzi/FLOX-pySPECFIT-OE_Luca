@@ -12,7 +12,9 @@ from src.FLOX_processing_master import FLOX_processing_master
 #data_folder = "test_csv_no_unc"
 
 #data_folder = "test_csv_unc"
+#data_folder = "test_csv_teo"
 data_folder = "test_nc"
+
 
 
 # NetCDF input file (used only when nc_input = True)

@@ -1,8 +1,7 @@
 import numpy as np
 from scipy.interpolate import BSpline
-#from scipy.spatial.distance import cosine
 from scipy.special import gamma, gammainc
-from scipy.integrate import quad #!!!new, to be check in different versions of scipy
+from scipy.integrate import quad #!!!tbremoved
 import warnings
 import matplotlib.pyplot as plt
 
@@ -321,6 +320,8 @@ def _l2b_regularized_cost_function_optimization(
     def jac(x):
         jac, _ = _jacobian_calculation(fw, x, wvl, full_numerical=True, Lin=atm_func)
         return jac
+    #!!!todo: make full_numerical True or False an input for _l2b_regularized_cost_function_optimization
+
 
     # --- Initialization ---
     y   = apparent_reflectance
@@ -597,7 +598,7 @@ def LMgamma_update_Geodesic(rho, LMgamma, x0, x1_reg, c0, c1, fx0, fx1_reg, k0, 
     return LMgamma, x1_reg, c1, fx1_reg, k1_reg, flag, skipIteration
 
 
-def MC_SIF_uncertainty_estimation(x, sx, wvl, sizeMC):
+def MC_SIF_uncertainty_estimation(x, sx, wvl, sizeMC = 300):
     """
     Monte-Carlo approach for uncertainty estimation
 
@@ -605,7 +606,7 @@ def MC_SIF_uncertainty_estimation(x, sx, wvl, sizeMC):
         x (np.ndarray): parameters
         sx (np.ndarray): retrieval covariance matrix
         wvl (np.ndarray): wavelengths
-
+        sizeMC (int, optional): number of Monte Carlo realizations, by default 300
     Returns:
         np.ndarray: standard deviation of SIF across the Monte Carlo runs at each wavelength
     """
@@ -686,7 +687,7 @@ def _jacobian_calculation(func, x, wvl, epsilon=np.float64(1e-6), full_numerical
         jac_combined = jac_analytical
     else:
         jac_combined = np.hstack([jac_analytical, jac_numerical])
-    #!!!!need dimensional check in each case
+    #!!!need dimensional check
     return jac_combined, dx_dF 
 
 def _jacobian_calculation_analytical(x, wvl, Lin, ds=1e-6):

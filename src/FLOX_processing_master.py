@@ -92,6 +92,10 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
     allr_specfit = None         # Reflectance    
     allar_unc = None            # Apparent Reflectance uncertainty 
 
+    results = {"metrics": [], "sif": None, "sif_unc": None,
+        "ref": None, "ref_unc": None, "timestamps": [], "wavelengths": None, }
+
+
     if nc_input:
 
         if not uncertainty_as_input:
@@ -139,7 +143,10 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
         logf.flush()
 
         Lout = ds["L"].values[lb:ub+1, valid_cols] * 1e3
-        Lin = Lout/AppReflectance
+        Lout = np.nan_to_num(Lout, nan=0.0, posinf=0.0, neginf=0.0)
+        Lin = np.zeros_like(Lout, dtype=float)
+        np.divide(Lout, AppReflectance, out=Lin, where=AppReflectance != 0)
+
         
         utc_time = ds["UTC_time"].values[valid_cols]
         dt_time = pd.to_datetime(utc_time)
@@ -157,7 +164,7 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
             unc_AppReflectance  = unc_AppReflectance[:,start_temp:end_temp]
             utc_datime_str = utc_datime_str[start_temp:end_temp]
             doy_day_frac = doy_day_frac[start_temp:end_temp]
-            logf.write(f"\nShort case applied: columns {start_temp}:{end_temp} "f"(kept {end_temp - start_temp} elements)\n")
+            logf.write(f"\nShort case applied: columns {start_temp}:{end_temp-1} "f"(kept {end_temp - start_temp} elements)\n")
             logf.flush()
 
 
@@ -181,8 +188,42 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
         utc_datime_str = utc_datime_str.tolist()
         doy_day_frac = doy_day_frac.tolist()
 
+        n_spectra = AppReflectance.shape[1]
+        batch_size = 1000
+        start_indices=range(0, n_spectra, batch_size)
+        n_tables = len(start_indices)
+
+        for i_pair, start in enumerate(start_indices):
+            end = min(start + batch_size, n_spectra)
+            logf.write(f"Processing NetCDF spectra {start}:{end}\n")
+            logf.flush()
+            
+            filenum_offset=start
+            
+            results, failed_count, failed_indices = process_flox_block(
+                AppReflectance=AppReflectance[:, start:end],
+                unc_AppReflectance=unc_AppReflectance[:, start:end],
+                Lin=Lin[:, start:end],
+                wvl_sub=wvl_sub,
+                utc_datime_str=utc_datime_str[start:end],
+                doy_day_frac=doy_day_frac[start:end],
+                sa=sa,
+                xa_mean=xa_mean,
+                SIF_unc_MC=SIF_unc_MC,
+                parallel=parallel,
+                n_jobs=n_jobs,
+                results=results,
+                filenum_offset=filenum_offset,
+            )
+
+            logf.write(f"Finished Batch {i_pair} of {n_tables}. Processed {end-start} spectra.\n"
+                       f"Failed {failed_count}, indices (of the new list with only the processable spectra): \n"
+                       f"{[x + 1 for x in failed_indices]}.\n")
+            logf.flush()
+
+
     else:
-    # Search for input files: AppReflectance as main data (so with uncertainty), Incoming radiance as atm fun (so no uncertainty).
+        # Search for input files: AppReflectance as main data (so with uncertainty), Incoming radiance as atm fun (so no uncertainty).
         AppReflectance_pattern = os.path.join(data_path, "**", "Reflectance*FLUO*.csv")
         AppReflectance_list = sorted(glob.glob(AppReflectance_pattern, recursive=True))
         Lin_pattern = os.path.join(data_path, "**", "Incoming*FLUO*.csv")
@@ -236,7 +277,8 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
                 sample = "".join([f.readline() for _ in range(2)])
                 delimiter = csv.Sniffer().sniff(sample, delimiters=";,").delimiter
             data_AppReflectance = pd.read_csv(fname_AppReflectance,sep=delimiter,header=0)
-            AppReflectance_table = data_AppReflectance.iloc[:, 1:].to_numpy()
+            #AppReflectance_table = data_AppReflectance.iloc[:, 1:].to_numpy()
+            AppReflectance_table = (data_AppReflectance.iloc[:, 1:].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float))
 
             # Read the Incoming CSV
             fname_Lin = Lin_list[i_pair]
@@ -245,7 +287,8 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
                 sample = "".join([f.readline() for _ in range(2)])
                 delimiter = csv.Sniffer().sniff(sample, delimiters=";,").delimiter
             data_Lin = pd.read_csv(fname_Lin, sep=delimiter, header=0)
-            Lin_table = data_Lin.iloc[:, 1:].to_numpy()
+            #Lin_table = data_Lin.iloc[:, 1:].to_numpy()
+            Lin_table = (data_Lin.iloc[:, 1:].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float))
 
             # Read the AppReflectance Uncertainty CSV
             if uncertainty_as_input:
@@ -255,7 +298,8 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
                     sample = "".join([f.readline() for _ in range(2)])
                     delimiter = csv.Sniffer().sniff(sample, delimiters=";,").delimiter
                 data_unc_AppReflectance = pd.read_csv(fname_unc_AppReflectance, sep=delimiter, header=0)
-                unc_AppReflectance_table = data_unc_AppReflectance.iloc[:, 1:].to_numpy()
+                #unc_AppReflectance_table = data_unc_AppReflectance.iloc[:, 1:].to_numpy()
+                unc_AppReflectance_table = (data_unc_AppReflectance.iloc[:, 1:].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float))
             else:
                 logf.write(f"Uncertainty: computed\n")
 
@@ -312,9 +356,9 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
             Lin = np.nan_to_num(Lin, nan=0.0, posinf=0.0, neginf=0.0)
 
             valid_cols = np.all(AppReflectance >= 0, axis=0)
-            logf.write(f"Spectra not processed (AppReflectance<0), indices: {np.where(~valid_cols)[0]}\n")
+            logf.write(f"Spectra not processable, negative somewhere (exist 1 wavelength st AppReflectance<0), python indices (first is 0):\n{np.where(~valid_cols)[0]}")
             logf.flush()
-            
+
             AppReflectance = AppReflectance[:, valid_cols]
             Lin = Lin[:, valid_cols]
 
@@ -343,94 +387,44 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
                 frac_day = (dt_obj - datetime(dt_obj.year,dt_obj.month, dt_obj.day)).seconds / 86400
                 doy_day_frac.append(day_of_year + frac_day)
                 utc_datime_str.append(dt_obj.strftime("%d-%b-%Y %H:%M:%S"))
-                
-    # === FLOX Data Processing ===
-    (
-        sif,                # Retrieved SIF spectrum (array)
-        ref,                # Retrieved reflectance spectrum (array)
-        fluo_unc,           # Uncertainty for SIF retrieval
-        ref_unc,            # Uncertainty for reflectance retrieval
-        wvl_out,            # Output wavelength grid
 
-        # Key SIF metrics
-        sif_r_max,          # Maximum SIF value in the red region
-        sif_r_wl,           # Wavelength corresponding to red peak
-        sif_o2b,            # SIF value at O2-B absorption band
-        sif_fr_max,         # Maximum SIF value in the far-red region
-        sif_fr_wl,          # Wavelength corresponding to far-red peak
-        sif_o2a,            # SIF value at O2-A absorption band
-        sif_int,            # Integrated SIF over the spectrum
+            n_spectra = AppReflectance.shape[1]
+            filenum_offset=0
+            results, failed_count, failed_indices = process_flox_block(
+                AppReflectance=AppReflectance,
+                unc_AppReflectance=unc_AppReflectance,
+                Lin=Lin,
+                wvl_sub=wvl_sub,
+                utc_datime_str=utc_datime_str,
+                doy_day_frac=doy_day_frac,
+                sa=sa,
+                xa_mean=xa_mean,
+                SIF_unc_MC=SIF_unc_MC,
+                parallel=parallel,
+                n_jobs=n_jobs,
+                results=results,
+                # Mantiene il comportamento originale:
+                # filenum riparte da 1 per ogni file CSV.
+                filenum_offset=filenum_offset,
+            )
 
-        # Uncertainties for key SIF metrics
-        sif_r_max_un,
-        sif_r_wl_un,
-        sif_o2b_un,
-        sif_fr_max_un,
-        sif_fr_wl_un,
-        sif_o2a_un,
-        sif_int_un,
+            logf.write(f"Finished file {i_pair+1} of {n_tables}. Processed {n_spectra} spectra.\n"
+                       f"Failed {failed_count}, indices (of the new list with only the processable spectra):\n"
+                       f"{[x + 1 for x in failed_indices]}.\n")
+            logf.flush()
 
-        app_ref_unc,         # Apparent reflectance uncertainty
-        failed_spectra       # List of spectra indices that failed during retrieval
-    ) = FLOX_processing(         
-        wvl=wvl_sub,             # Wavelength subset for processing
-        app_ref_array=AppReflectance,
-        app_ref_unc_array = unc_AppReflectance,
-        Lin_array=Lin ,        # Incident radiance (Lin) used only in arho_sim = rho + fluorescence / Lin
-        sa=sa,  # covariance matrix  
-        xa_mean=xa_mean,                # mean state vector
-        SIF_unc_MC=SIF_unc_MC,
-        parallel=parallel,
-        n_jobs=n_jobs,
-    )
-    n_spectra = AppReflectance.shape[1]
+    # === SAVE FINAL RESULTS ===
+    if results["sif"] is None: raise ValueError("No spectra available for processing after filtering.")
 
-    # Accumulate the results
-    out_arr_local = []
-    for idx_col in range(n_spectra): 
-        row = [
-            doy_day_frac[idx_col],
-            utc_datime_str[idx_col],
-            idx_col+1,
-            sif_fr_max[idx_col],
-            sif_fr_wl[idx_col],
-            sif_r_max[idx_col],
-            sif_r_wl[idx_col],
-            sif_o2b[idx_col],
-            sif_o2a[idx_col],
-            sif_int[idx_col],
-            sif_r_max_un[idx_col],
-            sif_r_wl_un[idx_col],
-            sif_o2b_un[idx_col],
-            sif_fr_max_un[idx_col],
-            sif_fr_wl_un[idx_col],
-            sif_o2a_un[idx_col],
-            sif_int_un[idx_col],
-        ]
-        out_arr_local.append(row)
+    allm_specfit = results["metrics"]
+    allf_specfit = results["sif"]
+    allf_unc_specfit = results["sif_unc"]
+    allr_specfit = results["ref"]
+    allar_unc = results["ref_unc"]
+    all_utc_datetime_str = results["timestamps"]
+    wvl_out = results["wavelengths"]
 
-    # Store in a list:
-    allm_specfit.extend(out_arr_local)
-
-    # Also accumulate the SIF/reflectance spectra
-    if allf_specfit is None:
-        allf_specfit = sif
-        allf_unc_specfit = fluo_unc
-        allr_specfit = ref
-        allar_unc = app_ref_unc
-        all_utc_datetime_str = utc_datime_str
-    else:
-        # Concatenate horizontally
-        allf_specfit = np.concatenate([allf_specfit, sif], axis=1)
-        allf_unc_specfit = np.concatenate([allf_unc_specfit, fluo_unc], axis=1)
-        allr_specfit = np.concatenate([allr_specfit, ref], axis=1)
-        allar_unc = np.concatenate([allar_unc, app_ref_unc], axis=1)
-        all_utc_datetime_str.extend(utc_datime_str)
-
-    logf.write(f"Finished file {1} of {1}. Processed {n_spectra} spectra.\nFailed {len(failed_spectra)}, indices (of the new list with only the processable spectra): \n{[x + 1 for x in failed_spectra]}.\n")
-    logf.flush()
-
-    # write output files
+    # SIF metrics header for CSV output
     out_header = [
         "DOYdayfrac",
         "UTC_datetime",
@@ -499,5 +493,66 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
 
 
 
+def process_flox_block(AppReflectance,unc_AppReflectance,Lin,wvl_sub,utc_datime_str,doy_day_frac,
+    sa,xa_mean,SIF_unc_MC,parallel,n_jobs,results,filenum_offset=0,):
+    """Process a batch and accumulate the results."""
+    (
+        sif, ref, fluo_unc, ref_unc, wvl_out,
+        sif_r_max, sif_r_wl, sif_o2b,
+        sif_fr_max, sif_fr_wl, sif_o2a, sif_int,
+        sif_r_max_un, sif_r_wl_un, sif_o2b_un,
+        sif_fr_max_un, sif_fr_wl_un,
+        sif_o2a_un, sif_int_un,
+        app_ref_unc, failed_spectra
+    ) = FLOX_processing(
+        wvl=wvl_sub,
+        app_ref_array=AppReflectance,
+        app_ref_unc_array=unc_AppReflectance,
+        Lin_array=Lin,
+        sa=sa,
+        xa_mean=xa_mean,
+        SIF_unc_MC=SIF_unc_MC,
+        parallel=parallel,
+        n_jobs=n_jobs,
+    )
 
+    n_spectra = AppReflectance.shape[1]
 
+    for idx_col in range(n_spectra):
+        results["metrics"].append([
+            doy_day_frac[idx_col],
+            utc_datime_str[idx_col],
+            filenum_offset + idx_col + 1,
+            sif_fr_max[idx_col],
+            sif_fr_wl[idx_col],
+            sif_r_max[idx_col],
+            sif_r_wl[idx_col],
+            sif_o2b[idx_col],
+            sif_o2a[idx_col],
+            sif_int[idx_col],
+            sif_r_max_un[idx_col],
+            sif_r_wl_un[idx_col],
+            sif_o2b_un[idx_col],
+            sif_fr_max_un[idx_col],
+            sif_fr_wl_un[idx_col],
+            sif_o2a_un[idx_col],
+            sif_int_un[idx_col],
+        ])
+
+    # First batch
+    if results["sif"] is None:
+        results["sif"] = sif
+        results["sif_unc"] = fluo_unc
+        results["ref"] = ref
+        results["ref_unc"] = app_ref_unc
+        results["timestamps"] = list(utc_datime_str)
+        results["wavelengths"] = wvl_out
+
+    else:
+        results["sif"] = np.concatenate([results["sif"], sif], axis=1)
+        results["sif_unc"] = np.concatenate([results["sif_unc"], fluo_unc], axis=1)
+        results["ref"] = np.concatenate([results["ref"], ref], axis=1)
+        results["ref_unc"] = np.concatenate([results["ref_unc"], app_ref_unc], axis=1)
+        results["timestamps"].extend(utc_datime_str)
+
+    return results, len(failed_spectra), failed_spectra
