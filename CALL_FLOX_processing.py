@@ -12,16 +12,15 @@ from src.FLOX_processing_master import FLOX_processing_master
 #data_folder = "test_csv_no_unc"
 
 #data_folder = "test_csv_unc"
-data_folder = "test_csv_teo"
-#data_folder = "test_nc"
-
-
+#data_folder = "test_csv_teo"
+data_folder = "test_nc"
 
 # NetCDF input file (used only when nc_input = True)
 data_nc = "RadIrrRef_FLOX_FLUO_2026-6-15_9_28_49.nc"
 
+
 # Input data flags
-nc_input = False                  # True: NetCDF input, False: CSV input
+nc_input = True                  # True: NetCDF input, False: CSV input
 uncertainty_as_input = False      # True: read uncertainty from the input files # False: compute uncertainty from a fixed relative uncertainty
 # Note: for NetCDF input, uncertainty is always read from the .nc file.
 
