@@ -167,5 +167,6 @@ def write_results_to_netcdf(
             metrics_array = np.array(sif_metrics)  # shape (n_timestamps, n_metrics)
             for i, name in enumerate(metric_names):
                 var = nc.createVariable(name, "f4", ("timestamp",), zlib=True)
+                var[:] = metrics_array[:, i + 3].astype(float)
 
 

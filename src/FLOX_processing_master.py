@@ -1,4 +1,4 @@
-
+import re
 import os
 import glob
 import numpy as np
@@ -375,14 +375,34 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
 
             # Compute UTC_time for the header information (from AppReflectance)
             utc_column = utc_column[valid_cols]
-            utc_time = [header.strip() for header in utc_column]
-            #folder_date = os.path.basename(os.path.dirname(fname_AppReflectance))
+            utc_time = [header.strip().strip('"') for header in utc_column]
+            folder_date = os.path.basename(os.path.dirname(fname_AppReflectance))
 
             doy_day_frac = []
             utc_datime_str = []
 
+            if not utc_time:
+                raise ValueError(f"No valid timestamps found in file: {fname_AppReflectance}")
+
+            first_time = utc_time[0]
+            
+            if re.fullmatch(r"\d{6}_\d{6}", first_time):
+                time_format = "%d%m%y_%H%M%S"# ddmmyy_HHMMSS, es. 150925_194229
+            elif re.fullmatch(r"\d{4}-\d{2}-\d{2}_\d{2}_\d{2}_\d{2}", first_time):
+                time_format = "%Y-%m-%d_%H_%M_%S"  # yyyy-mm-dd_HH_MM_SS, es. 2026-03-15_04_00_59
+            elif re.fullmatch(r"\d{2}_\d{2}_\d{2}", first_time):
+                # HH_MM_SS, es. 08_01_12
+                # The date is extracted from the parent folder (yymmdd, e.g. 220715)
+                if not re.fullmatch(r"\d{6}", folder_date):  #folder name is: yymmdd es. 150925
+                    raise ValueError(f"Folder name not valid for extracting the date in format: {folder_date!r} (file: {fname_AppReflectance})")
+                date_str = datetime.strptime(folder_date, "%y%m%d").strftime("%Y-%m-%d")
+                utc_time = [f"{date_str}_{time_str}" for time_str in utc_time]
+                time_format = "%Y-%m-%d_%H_%M_%S"
+            else:
+                raise ValueError(f"Timestamp format not recognized: {first_time!r} (file: {fname_AppReflectance})")
+            
             for time_str in utc_time:
-                dt_obj = datetime.strptime(time_str, "%d%m%y_%H%M%S")
+                dt_obj = datetime.strptime(time_str, time_format)
                 day_of_year = (dt_obj - datetime(dt_obj.year, 1, 1)).days + 1
                 frac_day = (dt_obj - datetime(dt_obj.year,dt_obj.month, dt_obj.day)).seconds / 86400
                 doy_day_frac.append(day_of_year + frac_day)
@@ -403,8 +423,6 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
                 parallel=parallel,
                 n_jobs=n_jobs,
                 results=results,
-                # Mantiene il comportamento originale:
-                # filenum riparte da 1 per ogni file CSV.
                 filenum_offset=filenum_offset,
             )
 
@@ -433,15 +451,15 @@ def FLOX_processing_master(data_path, uncertainty_path, data_nc, cov_path, nc_in
         "SIF_FARRED_max_wvl",
         "SIF_RED_max",
         "SIF_RED_max_wvl",
-        "SIF_O2B",
         "SIF_O2A",
+        "SIF_O2B",
         "SIF_int",
-        "SIF_RED_max_un",
-        "SIF_RED_max_wvl_un",
-        "SIF_O2B_un",
         "SIF_FARRED_max_un",
         "SIF_FARRED_max_wvl_un",
+        "SIF_RED_max_un",
+        "SIF_RED_max_wvl_un",
         "SIF_O2A_un",
+        "SIF_O2B_un",
         "SIF_int_un"]
 
     final_sif_params_name = os.path.join(output_path,f"{proc_time_all}_pySPECFIT-OE_SIF_metrics.txt")
@@ -527,15 +545,15 @@ def process_flox_block(AppReflectance,unc_AppReflectance,Lin,wvl_sub,utc_datime_
             sif_fr_wl[idx_col],
             sif_r_max[idx_col],
             sif_r_wl[idx_col],
-            sif_o2b[idx_col],
             sif_o2a[idx_col],
+            sif_o2b[idx_col],
             sif_int[idx_col],
-            sif_r_max_un[idx_col],
-            sif_r_wl_un[idx_col],
-            sif_o2b_un[idx_col],
             sif_fr_max_un[idx_col],
             sif_fr_wl_un[idx_col],
+            sif_r_max_un[idx_col],
+            sif_r_wl_un[idx_col],
             sif_o2a_un[idx_col],
+            sif_o2b_un[idx_col],
             sif_int_un[idx_col],
         ])
 
